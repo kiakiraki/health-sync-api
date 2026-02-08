@@ -9,7 +9,14 @@
 	"compatibility_date": "2026-01-28",
 	"observability": {
 		"enabled": true
-	}
+	},
+	"d1_databases": [
+		{
+			"binding": "health_sync_db",
+			"database_name": "health-sync-db",
+			"database_id": "ba482d16-2835-4d70-a883-71f96f0c53a3"
+		}
+	]
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
