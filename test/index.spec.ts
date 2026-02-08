@@ -4,6 +4,9 @@ import worker from '../src/index';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyJson = Record<string, any>;
+
 const API_KEY = 'dev-local-key';
 
 function createAuthHeaders() {
@@ -28,7 +31,7 @@ async function makeRequest(
 		body: body ? JSON.stringify(body) : undefined,
 	});
 	const ctx = createExecutionContext();
-	const response = await worker.fetch(request, env, ctx);
+	const response = await worker.fetch(request, env);
 	await waitOnExecutionContext(ctx);
 	return response;
 }
@@ -38,7 +41,7 @@ describe('Health Sync API', () => {
 		it('returns status ok without authentication', async () => {
 			const response = await makeRequest('/health');
 			expect(response.status).toBe(200);
-			const data = await response.json();
+			const data = await response.json<AnyJson>();
 			expect(data.status).toBe('ok');
 			expect(data.timestamp).toBeDefined();
 		});
@@ -61,10 +64,10 @@ describe('Health Sync API', () => {
 				body: 'invalid json',
 			});
 			const ctx = createExecutionContext();
-			const response = await worker.fetch(request, env, ctx);
+			const response = await worker.fetch(request, env);
 			await waitOnExecutionContext(ctx);
 			expect(response.status).toBe(400);
-			const data = await response.json();
+			const data = await response.json<AnyJson>();
 			expect(data.error).toBe('Invalid JSON body');
 		});
 
@@ -75,7 +78,7 @@ describe('Health Sync API', () => {
 				headers: createAuthHeaders(),
 			});
 			expect(response.status).toBe(400);
-			const data = await response.json();
+			const data = await response.json<AnyJson>();
 			expect(data.error).toBe('test_date is required');
 		});
 
@@ -101,7 +104,7 @@ describe('Health Sync API', () => {
 				headers: createAuthHeaders(),
 			});
 			expect(response.status).toBe(201);
-			const data = await response.json();
+			const data = await response.json<AnyJson>();
 			expect(data.success).toBe(true);
 			expect(data.test_date).toBe(testDate);
 
@@ -189,7 +192,7 @@ describe('Health Sync API', () => {
 				headers: createAuthHeaders(),
 			});
 			expect(response.status).toBe(200);
-			const data = await response.json();
+			const data = await response.json<AnyJson>();
 			expect(data.blood_tests).toBeDefined();
 			expect(Array.isArray(data.blood_tests)).toBe(true);
 		});
@@ -199,7 +202,7 @@ describe('Health Sync API', () => {
 				headers: createAuthHeaders(),
 			});
 			expect(response.status).toBe(200);
-			const data = await response.json();
+			const data = await response.json<AnyJson>();
 			expect(data.blood_tests).toBeDefined();
 		});
 
@@ -208,7 +211,7 @@ describe('Health Sync API', () => {
 				headers: createAuthHeaders(),
 			});
 			expect(response.status).toBe(400);
-			const data = await response.json();
+			const data = await response.json<AnyJson>();
 			expect(data.error).toBe('Invalid days parameter (must be 1-365)');
 		});
 
@@ -240,7 +243,7 @@ describe('Health Sync API', () => {
 				headers: createAuthHeaders(),
 			});
 			expect(response.status).toBe(200);
-			const data = await response.json();
+			const data = await response.json<AnyJson>();
 
 			expect(data.blood_tests).toBeDefined();
 			expect(Array.isArray(data.blood_tests)).toBe(true);
@@ -251,7 +254,7 @@ describe('Health Sync API', () => {
 				headers: createAuthHeaders(),
 			});
 			expect(response.status).toBe(200);
-			const data = await response.json();
+			const data = await response.json<AnyJson>();
 
 			expect(data).toHaveProperty('body_measurements');
 			expect(data).toHaveProperty('blood_pressure');
@@ -283,7 +286,7 @@ describe('Health Sync API', () => {
 				headers: createAuthHeaders(),
 			});
 			expect(response.status).toBe(200);
-			const data = await response.json();
+			const data = await response.json<AnyJson>();
 			expect(data.success).toBe(true);
 			expect(data.inserted.body_measurements).toBe(1);
 		});
@@ -310,7 +313,7 @@ describe('Health Sync API', () => {
 				headers: createAuthHeaders(),
 			});
 			expect(response.status).toBe(201);
-			const data = await response.json();
+			const data = await response.json<AnyJson>();
 			expect(data.success).toBe(true);
 		});
 	});

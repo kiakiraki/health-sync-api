@@ -1,8 +1,3 @@
-interface Env {
-	health_sync_db: D1Database;
-	API_KEY: string;
-}
-
 interface BodyMeasurement {
 	recorded_at: string;
 	weight_kg?: number;
