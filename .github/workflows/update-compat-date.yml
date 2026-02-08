@@ -22,7 +22,7 @@ jobs:
           echo "Updated compatibility_date to $NEW_DATE"
 
       - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           commit-message: "chore: update compatibility_date"
           branch: chore/update-compat-date
