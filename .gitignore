@@ -165,3 +165,6 @@ dist
 .env*
 !.env.example
 .wrangler/
+
+# Personal health data
+seed_blood_tests.sql
