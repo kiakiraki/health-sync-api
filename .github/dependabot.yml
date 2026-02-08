@@ -10,11 +10,11 @@ updates:
       cloudflare:
         patterns:
           - "wrangler"
-          - "@cloudflare/*"
-      vitest:
+      testing:
         patterns:
           - "vitest"
           - "@vitest/*"
+          - "@cloudflare/vitest-pool-workers"
     labels:
       - "dependencies"
 
