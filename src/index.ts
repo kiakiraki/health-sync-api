@@ -83,6 +83,12 @@ function errorResponse(message: string, status: number): Response {
 
 const DATE_FORMAT = /^\d{4}-\d{2}-\d{2}$/;
 
+function daysAgoDate(days: number): string {
+	const date = new Date();
+	date.setUTCDate(date.getUTCDate() - days);
+	return date.toISOString().split('T')[0];
+}
+
 function parseDateRangeParams(
 	url: URL,
 	defaultDays?: number
@@ -111,12 +117,12 @@ function parseDateRangeParams(
 		if (isNaN(days) || days < 1) {
 			return { error: errorResponse('Invalid days parameter (must be a positive integer)', 400) };
 		}
-		return { from: `__DAYS__${days}` };
+		return { from: daysAgoDate(days) };
 	}
 
 	// No parameters: use default if provided
 	if (defaultDays !== undefined) {
-		return { from: `__DAYS__${defaultDays}` };
+		return { from: daysAgoDate(defaultDays) };
 	}
 
 	return {};
@@ -131,33 +137,13 @@ function buildDateFilter(
 	const params: string[] = [];
 
 	if (range.from) {
-		if (range.from.startsWith('__DAYS__')) {
-			const days = range.from.slice(7);
-			if (type === 'datetime') {
-				conditions.push(`${column} >= datetime('now', ?)`);
-			} else {
-				conditions.push(`${column} >= date('now', ?)`);
-			}
-			params.push(`-${days} days`);
-		} else {
-			if (type === 'datetime') {
-				conditions.push(`${column} >= ?`);
-				params.push(`${range.from} 00:00:00`);
-			} else {
-				conditions.push(`${column} >= ?`);
-				params.push(range.from);
-			}
-		}
+		conditions.push(`${column} >= ?`);
+		params.push(type === 'datetime' ? `${range.from} 00:00:00` : range.from);
 	}
 
 	if (range.to) {
-		if (type === 'datetime') {
-			conditions.push(`${column} <= ?`);
-			params.push(`${range.to} 23:59:59`);
-		} else {
-			conditions.push(`${column} <= ?`);
-			params.push(range.to);
-		}
+		conditions.push(`${column} <= ?`);
+		params.push(type === 'datetime' ? `${range.to} 23:59:59` : range.to);
 	}
 
 	const clause = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
