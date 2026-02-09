@@ -52,16 +52,25 @@ All endpoints except `/health` require Bearer token authentication via `API_KEY`
 - `GET /health` - Health check (no auth)
 - `POST /sync` - Batch insert health metrics (body_measurements, blood_pressure, sleep_sessions, steps)
 - `POST /cpap` - Upsert CPAP log entry (uses ON CONFLICT for recorded_date)
-- `GET /metrics?days=N` - Query all health data for the last N days (1-365)
+- `GET /metrics` - Query all health data with date filtering (default: last 7 days)
+  - `?days=N` - Last N days (positive integer, no upper limit)
+  - `?from=YYYY-MM-DD` - From date (inclusive), returns data from this date to now
+  - `?to=YYYY-MM-DD` - To date (inclusive), returns data up to this date
+  - `?from=YYYY-MM-DD&to=YYYY-MM-DD` - Date range (inclusive)
+  - `from`/`to` takes priority over `days` when both are specified
+- `POST /blood-test` - Upsert blood test entry (uses ON CONFLICT for test_date)
+- `GET /blood-test` - Query blood test data with date filtering (default: all records)
+  - Same query parameters as `/metrics` (`days`, `from`, `to`)
 
 ### Data Models
 
-Five tables store health data:
+Six tables store health data:
 - `body_measurements` - Weight and body fat percentage
 - `blood_pressure` - Systolic, diastolic, and pulse
 - `sleep_sessions` - Sleep start/end times and duration
 - `steps` - Daily step counts
 - `cpap_logs` - CPAP therapy data (AHI, AI, leak, usage hours)
+- `blood_tests` - Blood test results (glucose, HbA1c, lipids, liver/kidney markers)
 
 ### Environment Bindings
 
