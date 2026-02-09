@@ -316,6 +316,99 @@ describe('Health Sync API', () => {
 			const data = await response.json<AnyJson>();
 			expect(data.success).toBe(true);
 		});
+
+		it('creates cpap log with extended columns', async () => {
+			const recordedDate = '2020-09-01';
+			const response = await makeRequest('/cpap', {
+				method: 'POST',
+				body: {
+					recorded_date: recordedDate,
+					ahi: 1.64,
+					ai: 1.42,
+					leak: 0.72,
+					usage_hours: 9.17,
+					ai_count: 13,
+					hi_count: 2,
+					csa_count: 0,
+					snore_count: 1,
+					ai_total_duration_sec: 201,
+					hi_total_duration_sec: 20,
+					pressure_min: 4.0,
+					pressure_max: 8.0,
+					pressure_mean: 5.31,
+					pressure_median: 5.1,
+					pressure_p90: 6.7,
+					pressure_p95: 7.3,
+					br_mean: 16.23,
+					br_median: 17.0,
+					tv_mean: 464.22,
+					tv_median: 400.5,
+				},
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(201);
+
+			const result = await env.health_sync_db
+				.prepare('SELECT * FROM cpap_logs WHERE recorded_date = ?')
+				.bind(recordedDate)
+				.first();
+			expect(result).not.toBeNull();
+			expect(result!.ai_count).toBe(13);
+			expect(result!.hi_count).toBe(2);
+			expect(result!.csa_count).toBe(0);
+			expect(result!.snore_count).toBe(1);
+			expect(result!.pressure_p95).toBe(7.3);
+			expect(result!.br_mean).toBe(16.23);
+			expect(result!.tv_mean).toBe(464.22);
+		});
+
+		it('preserves existing notes and ai on upsert with COALESCE', async () => {
+			const recordedDate = '2020-09-10';
+
+			// Insert initial record with notes and ai
+			await makeRequest('/cpap', {
+				method: 'POST',
+				body: {
+					recorded_date: recordedDate,
+					ahi: 3.0,
+					ai: 2.0,
+					notes: 'Mask adjusted',
+					usage_hours: 6.5,
+				},
+				headers: createAuthHeaders(),
+			});
+
+			// Upsert without notes and ai (simulating CSV import)
+			await makeRequest('/cpap', {
+				method: 'POST',
+				body: {
+					recorded_date: recordedDate,
+					ahi: 3.2,
+					leak: 1.1,
+					usage_hours: 7.0,
+					ai_count: 10,
+					hi_count: 5,
+					pressure_p95: 7.5,
+				},
+				headers: createAuthHeaders(),
+			});
+
+			const result = await env.health_sync_db
+				.prepare('SELECT * FROM cpap_logs WHERE recorded_date = ?')
+				.bind(recordedDate)
+				.first();
+			expect(result).not.toBeNull();
+			// notes should be preserved via COALESCE
+			expect(result!.notes).toBe('Mask adjusted');
+			// ai should be preserved via COALESCE
+			expect(result!.ai).toBe(2.0);
+			// New columns should be updated
+			expect(result!.ai_count).toBe(10);
+			expect(result!.pressure_p95).toBe(7.5);
+			// ahi and usage_hours should be overwritten
+			expect(result!.ahi).toBe(3.2);
+			expect(result!.usage_hours).toBe(7.0);
+		});
 	});
 
 	describe('404 handling', () => {

@@ -29,6 +29,22 @@ interface CpapLog {
 	leak?: number;
 	usage_hours?: number;
 	notes?: string;
+	ai_count?: number;
+	hi_count?: number;
+	csa_count?: number;
+	snore_count?: number;
+	ai_total_duration_sec?: number;
+	hi_total_duration_sec?: number;
+	pressure_min?: number;
+	pressure_max?: number;
+	pressure_mean?: number;
+	pressure_median?: number;
+	pressure_p90?: number;
+	pressure_p95?: number;
+	br_mean?: number;
+	br_median?: number;
+	tv_mean?: number;
+	tv_median?: number;
 }
 
 interface BloodTest {
@@ -187,14 +203,35 @@ async function handleCpap(request: Request, env: Env): Promise<Response> {
 
 	await env.health_sync_db
 		.prepare(
-			`INSERT INTO cpap_logs (recorded_date, ahi, ai, leak, usage_hours, notes)
-			 VALUES (?, ?, ?, ?, ?, ?)
+			`INSERT INTO cpap_logs (
+				recorded_date, ahi, ai, leak, usage_hours, notes,
+				ai_count, hi_count, csa_count, snore_count,
+				ai_total_duration_sec, hi_total_duration_sec,
+				pressure_min, pressure_max, pressure_mean, pressure_median, pressure_p90, pressure_p95,
+				br_mean, br_median, tv_mean, tv_median
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(recorded_date) DO UPDATE SET
 			 ahi = excluded.ahi,
-			 ai = excluded.ai,
+			 ai = COALESCE(cpap_logs.ai, excluded.ai),
 			 leak = excluded.leak,
 			 usage_hours = excluded.usage_hours,
-			 notes = excluded.notes`
+			 notes = COALESCE(cpap_logs.notes, excluded.notes),
+			 ai_count = excluded.ai_count,
+			 hi_count = excluded.hi_count,
+			 csa_count = excluded.csa_count,
+			 snore_count = excluded.snore_count,
+			 ai_total_duration_sec = excluded.ai_total_duration_sec,
+			 hi_total_duration_sec = excluded.hi_total_duration_sec,
+			 pressure_min = excluded.pressure_min,
+			 pressure_max = excluded.pressure_max,
+			 pressure_mean = excluded.pressure_mean,
+			 pressure_median = excluded.pressure_median,
+			 pressure_p90 = excluded.pressure_p90,
+			 pressure_p95 = excluded.pressure_p95,
+			 br_mean = excluded.br_mean,
+			 br_median = excluded.br_median,
+			 tv_mean = excluded.tv_mean,
+			 tv_median = excluded.tv_median`
 		)
 		.bind(
 			body.recorded_date,
@@ -202,7 +239,23 @@ async function handleCpap(request: Request, env: Env): Promise<Response> {
 			body.ai ?? null,
 			body.leak ?? null,
 			body.usage_hours ?? null,
-			body.notes ?? null
+			body.notes ?? null,
+			body.ai_count ?? null,
+			body.hi_count ?? null,
+			body.csa_count ?? null,
+			body.snore_count ?? null,
+			body.ai_total_duration_sec ?? null,
+			body.hi_total_duration_sec ?? null,
+			body.pressure_min ?? null,
+			body.pressure_max ?? null,
+			body.pressure_mean ?? null,
+			body.pressure_median ?? null,
+			body.pressure_p90 ?? null,
+			body.pressure_p95 ?? null,
+			body.br_mean ?? null,
+			body.br_median ?? null,
+			body.tv_mean ?? null,
+			body.tv_median ?? null
 		)
 		.run();
 
