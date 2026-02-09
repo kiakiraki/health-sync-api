@@ -212,14 +212,14 @@ describe('Health Sync API', () => {
 			});
 			expect(response.status).toBe(400);
 			const data = await response.json<AnyJson>();
-			expect(data.error).toBe('Invalid days parameter (must be 1-365)');
+			expect(data.error).toBe('Invalid days parameter (must be a positive integer)');
 		});
 
-		it('returns 400 for days > 365', async () => {
-			const response = await makeRequest('/blood-test?days=400', {
+		it('accepts days > 365 (no upper limit)', async () => {
+			const response = await makeRequest('/blood-test?days=730', {
 				headers: createAuthHeaders(),
 			});
-			expect(response.status).toBe(400);
+			expect(response.status).toBe(200);
 		});
 
 		it('returns 400 for non-numeric days', async () => {
@@ -227,6 +227,109 @@ describe('Health Sync API', () => {
 				headers: createAuthHeaders(),
 			});
 			expect(response.status).toBe(400);
+		});
+
+		it('filters by from parameter', async () => {
+			await makeRequest('/blood-test', {
+				method: 'POST',
+				body: { test_date: '2020-01-15', glucose: 90 },
+				headers: createAuthHeaders(),
+			});
+			await makeRequest('/blood-test', {
+				method: 'POST',
+				body: { test_date: '2020-06-15', glucose: 95 },
+				headers: createAuthHeaders(),
+			});
+
+			const response = await makeRequest('/blood-test?from=2020-03-01', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(200);
+			const data = await response.json<AnyJson>();
+			expect(data.blood_tests.every((t: AnyJson) => t.test_date >= '2020-03-01')).toBe(true);
+		});
+
+		it('filters by to parameter', async () => {
+			await makeRequest('/blood-test', {
+				method: 'POST',
+				body: { test_date: '2020-01-10', glucose: 88 },
+				headers: createAuthHeaders(),
+			});
+			await makeRequest('/blood-test', {
+				method: 'POST',
+				body: { test_date: '2020-12-25', glucose: 100 },
+				headers: createAuthHeaders(),
+			});
+
+			const response = await makeRequest('/blood-test?to=2020-06-01', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(200);
+			const data = await response.json<AnyJson>();
+			expect(data.blood_tests.every((t: AnyJson) => t.test_date <= '2020-06-01')).toBe(true);
+		});
+
+		it('filters by from and to parameters', async () => {
+			await makeRequest('/blood-test', {
+				method: 'POST',
+				body: { test_date: '2020-02-01', glucose: 85 },
+				headers: createAuthHeaders(),
+			});
+			await makeRequest('/blood-test', {
+				method: 'POST',
+				body: { test_date: '2020-04-01', glucose: 92 },
+				headers: createAuthHeaders(),
+			});
+			await makeRequest('/blood-test', {
+				method: 'POST',
+				body: { test_date: '2020-08-01', glucose: 98 },
+				headers: createAuthHeaders(),
+			});
+
+			const response = await makeRequest('/blood-test?from=2020-03-01&to=2020-05-01', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(200);
+			const data = await response.json<AnyJson>();
+			expect(
+				data.blood_tests.every(
+					(t: AnyJson) => t.test_date >= '2020-03-01' && t.test_date <= '2020-05-01'
+				)
+			).toBe(true);
+		});
+
+		it('from/to takes priority over days', async () => {
+			const response = await makeRequest('/blood-test?from=2020-01-01&to=2020-12-31&days=1', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(200);
+		});
+
+		it('returns 400 for invalid from format', async () => {
+			const response = await makeRequest('/blood-test?from=abc', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(400);
+			const data = await response.json<AnyJson>();
+			expect(data.error).toBe('Invalid from parameter (must be YYYY-MM-DD)');
+		});
+
+		it('returns 400 for invalid to format', async () => {
+			const response = await makeRequest('/blood-test?to=2022/01/01', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(400);
+			const data = await response.json<AnyJson>();
+			expect(data.error).toBe('Invalid to parameter (must be YYYY-MM-DD)');
+		});
+
+		it('returns 400 when from is after to', async () => {
+			const response = await makeRequest('/blood-test?from=2020-12-01&to=2020-01-01', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(400);
+			const data = await response.json<AnyJson>();
+			expect(data.error).toBe('from must not be after to');
 		});
 	});
 
@@ -262,6 +365,71 @@ describe('Health Sync API', () => {
 			expect(data).toHaveProperty('steps');
 			expect(data).toHaveProperty('cpap_logs');
 			expect(data).toHaveProperty('blood_tests');
+		});
+
+		it('accepts days > 365 (no upper limit)', async () => {
+			const response = await makeRequest('/metrics?days=730', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(200);
+		});
+
+		it('returns 400 for invalid days parameter', async () => {
+			const response = await makeRequest('/metrics?days=0', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(400);
+		});
+
+		it('returns 400 for non-numeric days', async () => {
+			const response = await makeRequest('/metrics?days=abc', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(400);
+		});
+
+		it('supports from parameter', async () => {
+			const response = await makeRequest('/metrics?from=2020-01-01', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(200);
+			const data = await response.json<AnyJson>();
+			expect(data).toHaveProperty('body_measurements');
+		});
+
+		it('supports to parameter', async () => {
+			const response = await makeRequest('/metrics?to=2020-12-31', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(200);
+		});
+
+		it('supports from and to parameters', async () => {
+			const response = await makeRequest('/metrics?from=2020-01-01&to=2020-12-31', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(200);
+		});
+
+		it('returns 400 for invalid from format', async () => {
+			const response = await makeRequest('/metrics?from=invalid', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(400);
+		});
+
+		it('returns 400 when from is after to', async () => {
+			const response = await makeRequest('/metrics?from=2020-12-01&to=2020-01-01', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(400);
+		});
+
+		it('from/to ignores days parameter', async () => {
+			const response = await makeRequest('/metrics?from=2020-01-01&to=2020-12-31&days=1', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(200);
 		});
 	});
 

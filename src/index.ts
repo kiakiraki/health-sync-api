@@ -81,6 +81,89 @@ function errorResponse(message: string, status: number): Response {
 	return jsonResponse({ error: message }, status);
 }
 
+const DATE_FORMAT = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseDateRangeParams(
+	url: URL,
+	defaultDays?: number
+): { from?: string; to?: string; error?: Response } {
+	const fromParam = url.searchParams.get('from');
+	const toParam = url.searchParams.get('to');
+	const daysParam = url.searchParams.get('days');
+
+	// from/to takes priority over days
+	if (fromParam || toParam) {
+		if (fromParam && !DATE_FORMAT.test(fromParam)) {
+			return { error: errorResponse('Invalid from parameter (must be YYYY-MM-DD)', 400) };
+		}
+		if (toParam && !DATE_FORMAT.test(toParam)) {
+			return { error: errorResponse('Invalid to parameter (must be YYYY-MM-DD)', 400) };
+		}
+		if (fromParam && toParam && fromParam > toParam) {
+			return { error: errorResponse('from must not be after to', 400) };
+		}
+		return { from: fromParam ?? undefined, to: toParam ?? undefined };
+	}
+
+	// days parameter
+	if (daysParam) {
+		const days = parseInt(daysParam, 10);
+		if (isNaN(days) || days < 1) {
+			return { error: errorResponse('Invalid days parameter (must be a positive integer)', 400) };
+		}
+		return { from: `__DAYS__${days}` };
+	}
+
+	// No parameters: use default if provided
+	if (defaultDays !== undefined) {
+		return { from: `__DAYS__${defaultDays}` };
+	}
+
+	return {};
+}
+
+function buildDateFilter(
+	column: string,
+	type: 'date' | 'datetime',
+	range: { from?: string; to?: string }
+): { clause: string; params: string[] } {
+	const conditions: string[] = [];
+	const params: string[] = [];
+
+	if (range.from) {
+		if (range.from.startsWith('__DAYS__')) {
+			const days = range.from.slice(7);
+			if (type === 'datetime') {
+				conditions.push(`${column} >= datetime('now', ?)`);
+			} else {
+				conditions.push(`${column} >= date('now', ?)`);
+			}
+			params.push(`-${days} days`);
+		} else {
+			if (type === 'datetime') {
+				conditions.push(`${column} >= ?`);
+				params.push(`${range.from} 00:00:00`);
+			} else {
+				conditions.push(`${column} >= ?`);
+				params.push(range.from);
+			}
+		}
+	}
+
+	if (range.to) {
+		if (type === 'datetime') {
+			conditions.push(`${column} <= ?`);
+			params.push(`${range.to} 23:59:59`);
+		} else {
+			conditions.push(`${column} <= ?`);
+			params.push(range.to);
+		}
+	}
+
+	const clause = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+	return { clause, params };
+}
+
 function authenticate(request: Request, env: Env): Response | null {
 	const authHeader = request.headers.get('Authorization');
 	if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -314,27 +397,14 @@ async function handleBloodTest(request: Request, env: Env): Promise<Response> {
 
 async function handleGetBloodTest(request: Request, env: Env): Promise<Response> {
 	const url = new URL(request.url);
-	const daysParam = url.searchParams.get('days');
+	const range = parseDateRangeParams(url);
+	if (range.error) return range.error;
 
-	// days パラメータなしの場合は全件返す
-	if (!daysParam) {
-		const results = await env.health_sync_db
-			.prepare(`SELECT * FROM blood_tests ORDER BY test_date ASC`)
-			.all();
-		return jsonResponse({ blood_tests: results.results });
-	}
-
-	const days = parseInt(daysParam, 10);
-	if (isNaN(days) || days < 1 || days > 365) {
-		return errorResponse('Invalid days parameter (must be 1-365)', 400);
-	}
-
-	const dateFilter = `-${days} days`;
+	const { clause, params } = buildDateFilter('test_date', 'date', range);
+	const query = `SELECT * FROM blood_tests${clause} ORDER BY test_date ASC`;
 	const results = await env.health_sync_db
-		.prepare(
-			`SELECT * FROM blood_tests WHERE test_date >= date('now', ?) ORDER BY test_date ASC`
-		)
-		.bind(dateFilter)
+		.prepare(query)
+		.bind(...params)
 		.all();
 
 	return jsonResponse({ blood_tests: results.results });
@@ -342,51 +412,41 @@ async function handleGetBloodTest(request: Request, env: Env): Promise<Response>
 
 async function handleMetrics(request: Request, env: Env): Promise<Response> {
 	const url = new URL(request.url);
-	const days = parseInt(url.searchParams.get('days') || '7', 10);
+	const range = parseDateRangeParams(url, 7);
+	if (range.error) return range.error;
 
-	if (isNaN(days) || days < 1 || days > 365) {
-		return errorResponse('Invalid days parameter (must be 1-365)', 400);
-	}
-
-	const dateFilter = `-${days} days`;
+	const bmFilter = buildDateFilter('recorded_at', 'datetime', range);
+	const bpFilter = buildDateFilter('recorded_at', 'datetime', range);
+	const ssFilter = buildDateFilter('start_time', 'datetime', range);
+	const stFilter = buildDateFilter('date', 'date', range);
+	const cpFilter = buildDateFilter('recorded_date', 'date', range);
+	const btFilter = buildDateFilter('test_date', 'date', range);
 
 	const [bodyMeasurements, bloodPressure, sleepSessions, steps, cpapLogs, bloodTests] =
 		await Promise.all([
 			env.health_sync_db
-				.prepare(
-					`SELECT * FROM body_measurements WHERE recorded_at >= datetime('now', ?) ORDER BY recorded_at DESC`
-				)
-				.bind(dateFilter)
+				.prepare(`SELECT * FROM body_measurements${bmFilter.clause} ORDER BY recorded_at DESC`)
+				.bind(...bmFilter.params)
 				.all(),
 			env.health_sync_db
-				.prepare(
-					`SELECT * FROM blood_pressure WHERE recorded_at >= datetime('now', ?) ORDER BY recorded_at DESC`
-				)
-				.bind(dateFilter)
+				.prepare(`SELECT * FROM blood_pressure${bpFilter.clause} ORDER BY recorded_at DESC`)
+				.bind(...bpFilter.params)
 				.all(),
 			env.health_sync_db
-				.prepare(
-					`SELECT * FROM sleep_sessions WHERE start_time >= datetime('now', ?) ORDER BY start_time DESC`
-				)
-				.bind(dateFilter)
+				.prepare(`SELECT * FROM sleep_sessions${ssFilter.clause} ORDER BY start_time DESC`)
+				.bind(...ssFilter.params)
 				.all(),
 			env.health_sync_db
-				.prepare(
-					`SELECT * FROM steps WHERE date >= date('now', ?) ORDER BY date DESC`
-				)
-				.bind(dateFilter)
+				.prepare(`SELECT * FROM steps${stFilter.clause} ORDER BY date DESC`)
+				.bind(...stFilter.params)
 				.all(),
 			env.health_sync_db
-				.prepare(
-					`SELECT * FROM cpap_logs WHERE recorded_date >= date('now', ?) ORDER BY recorded_date DESC`
-				)
-				.bind(dateFilter)
+				.prepare(`SELECT * FROM cpap_logs${cpFilter.clause} ORDER BY recorded_date DESC`)
+				.bind(...cpFilter.params)
 				.all(),
 			env.health_sync_db
-				.prepare(
-					`SELECT * FROM blood_tests WHERE test_date >= date('now', ?) ORDER BY test_date DESC`
-				)
-				.bind(dateFilter)
+				.prepare(`SELECT * FROM blood_tests${btFilter.clause} ORDER BY test_date DESC`)
+				.bind(...btFilter.params)
 				.all(),
 		]);
 
