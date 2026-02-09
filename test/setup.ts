@@ -55,6 +55,22 @@ const setupDatabase = async () => {
 			leak REAL,
 			usage_hours REAL,
 			notes TEXT,
+			ai_count INTEGER,
+			hi_count INTEGER,
+			csa_count INTEGER,
+			snore_count INTEGER,
+			ai_total_duration_sec REAL,
+			hi_total_duration_sec REAL,
+			pressure_min REAL,
+			pressure_max REAL,
+			pressure_mean REAL,
+			pressure_median REAL,
+			pressure_p90 REAL,
+			pressure_p95 REAL,
+			br_mean REAL,
+			br_median REAL,
+			tv_mean REAL,
+			tv_median REAL,
 			created_at TEXT DEFAULT (datetime('now'))
 		)
 	`).run();

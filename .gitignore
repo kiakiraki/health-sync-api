@@ -168,3 +168,6 @@ dist
 
 # Personal health data
 seed_blood_tests.sql
+
+# Generated import SQL files
+scripts/output/
