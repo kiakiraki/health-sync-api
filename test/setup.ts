@@ -101,6 +101,26 @@ const setupDatabase = async () => {
 	await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_sleep_sessions_start_time ON sleep_sessions(start_time)`).run();
 	await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_steps_date ON steps(date)`).run();
 	await db.prepare(`CREATE INDEX IF NOT EXISTS idx_blood_tests_date ON blood_tests(test_date)`).run();
+
+	await db.prepare(`
+		CREATE TABLE IF NOT EXISTS meals (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			date TEXT NOT NULL,
+			meal_type TEXT NOT NULL,
+			description TEXT NOT NULL,
+			calories_kcal REAL,
+			protein_g REAL,
+			fat_g REAL,
+			carbs_g REAL,
+			fiber_g REAL,
+			salt_g REAL,
+			note TEXT,
+			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(date, meal_type)
+		)
+	`).run();
+
+	await db.prepare(`CREATE INDEX IF NOT EXISTS idx_meals_date ON meals(date)`).run();
 };
 
 await setupDatabase();

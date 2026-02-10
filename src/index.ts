@@ -63,6 +63,19 @@ interface BloodTest {
 	gtp?: number;
 }
 
+interface MealRecord {
+	date: string;
+	meal_type: string;
+	description: string;
+	calories_kcal?: number;
+	protein_g?: number;
+	fat_g?: number;
+	carbs_g?: number;
+	fiber_g?: number;
+	salt_g?: number;
+	note?: string;
+}
+
 interface SyncRequest {
 	body_measurements?: BodyMeasurement[];
 	blood_pressure?: BloodPressure[];
@@ -396,6 +409,82 @@ async function handleGetBloodTest(request: Request, env: Env): Promise<Response>
 	return jsonResponse({ blood_tests: results.results });
 }
 
+const VALID_MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
+
+async function handlePostMeal(request: Request, env: Env): Promise<Response> {
+	let body: MealRecord;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400);
+	}
+
+	// バリデーション
+	if (!body.date) {
+		return errorResponse('date is required', 400);
+	}
+	if (!DATE_FORMAT.test(body.date)) {
+		return errorResponse('Invalid date format (must be YYYY-MM-DD)', 400);
+	}
+	if (!body.meal_type || !VALID_MEAL_TYPES.includes(body.meal_type as any)) {
+		return errorResponse('meal_type must be one of: breakfast, lunch, dinner, snack', 400);
+	}
+	if (!body.description || body.description.trim() === '') {
+		return errorResponse('description is required', 400);
+	}
+
+	await env.health_sync_db
+		.prepare(
+			`INSERT INTO meals (date, meal_type, description, calories_kcal, protein_g, fat_g, carbs_g, fiber_g, salt_g, note)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(date, meal_type) DO UPDATE SET
+			 description = excluded.description,
+			 calories_kcal = excluded.calories_kcal,
+			 protein_g = excluded.protein_g,
+			 fat_g = excluded.fat_g,
+			 carbs_g = excluded.carbs_g,
+			 fiber_g = excluded.fiber_g,
+			 salt_g = excluded.salt_g,
+			 note = excluded.note`
+		)
+		.bind(
+			body.date,
+			body.meal_type,
+			body.description.trim(),
+			body.calories_kcal ?? null,
+			body.protein_g ?? null,
+			body.fat_g ?? null,
+			body.carbs_g ?? null,
+			body.fiber_g ?? null,
+			body.salt_g ?? null,
+			body.note ?? null
+		)
+		.run();
+
+	return jsonResponse({ success: true, date: body.date, meal_type: body.meal_type }, 201);
+}
+
+async function handleGetMeals(request: Request, env: Env): Promise<Response> {
+	const url = new URL(request.url);
+	const range = parseDateRangeParams(url, 7);
+	if (range.error) return range.error;
+
+	const { clause, params } = buildDateFilter('date', 'date', range);
+	const query = `SELECT * FROM meals${clause} ORDER BY date ASC,
+		CASE meal_type
+			WHEN 'breakfast' THEN 1
+			WHEN 'lunch' THEN 2
+			WHEN 'dinner' THEN 3
+			WHEN 'snack' THEN 4
+		END ASC`;
+	const results = await env.health_sync_db
+		.prepare(query)
+		.bind(...params)
+		.all();
+
+	return jsonResponse({ meals: results.results });
+}
+
 async function handleMetrics(request: Request, env: Env): Promise<Response> {
 	const url = new URL(request.url);
 	const range = parseDateRangeParams(url, 7);
@@ -484,6 +573,18 @@ export default {
 				const authError = authenticate(request, env);
 				if (authError) return authError;
 				return handleGetBloodTest(request, env);
+			}
+
+			if (path === '/meals' && request.method === 'POST') {
+				const authError = authenticate(request, env);
+				if (authError) return authError;
+				return handlePostMeal(request, env);
+			}
+
+			if (path === '/meals' && request.method === 'GET') {
+				const authError = authenticate(request, env);
+				if (authError) return authError;
+				return handleGetMeals(request, env);
 			}
 
 			return errorResponse('Not found', 404);
