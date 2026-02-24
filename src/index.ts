@@ -97,8 +97,21 @@ function jsonResponse(data: unknown, status = 200): Response {
 	});
 }
 
-function errorResponse(message: string, status: number): Response {
-	return jsonResponse({ error: message }, status);
+function errorResponse(message: string, status: number, extra?: Record<string, unknown>): Response {
+	return jsonResponse({ error: message, ...extra }, status);
+}
+
+function handleDbError(error: unknown): Response {
+	console.error('Database error:', error);
+	return errorResponse('Database operation failed', 500);
+}
+
+async function withDbErrorHandling(handler: () => Promise<Response>): Promise<Response> {
+	try {
+		return await handler();
+	} catch (error) {
+		return handleDbError(error);
+	}
 }
 
 const DATE_FORMAT = /^\d{4}-\d{2}-\d{2}$/;
@@ -208,92 +221,97 @@ async function handleSync(request: Request, env: Env): Promise<Response> {
 		steps: 0,
 	};
 
-	// Insert body measurements
-	if (body.body_measurements && body.body_measurements.length > 0) {
-		for (const m of body.body_measurements) {
-			await env.health_sync_db
-				.prepare(
-					`INSERT INTO body_measurements (recorded_at, weight_kg, body_fat_percent) VALUES (?, ?, ?)
-					 ON CONFLICT(recorded_at) DO UPDATE SET
-					 weight_kg = excluded.weight_kg,
-					 body_fat_percent = excluded.body_fat_percent`
-				)
-				.bind(m.recorded_at, m.weight_kg ?? null, m.body_fat_percent ?? null)
-				.run();
-			results.body_measurements++;
+	try {
+		// Insert body measurements
+		if (body.body_measurements && body.body_measurements.length > 0) {
+			for (const m of body.body_measurements) {
+				await env.health_sync_db
+					.prepare(
+						`INSERT INTO body_measurements (recorded_at, weight_kg, body_fat_percent) VALUES (?, ?, ?)
+						 ON CONFLICT(recorded_at) DO UPDATE SET
+						 weight_kg = excluded.weight_kg,
+						 body_fat_percent = excluded.body_fat_percent`
+					)
+					.bind(m.recorded_at, m.weight_kg ?? null, m.body_fat_percent ?? null)
+					.run();
+				results.body_measurements++;
+			}
 		}
-	}
 
-	// Insert blood pressure
-	if (body.blood_pressure && body.blood_pressure.length > 0) {
-		for (const bp of body.blood_pressure) {
-			await env.health_sync_db
-				.prepare(
-					`INSERT INTO blood_pressure (recorded_at, systolic, diastolic, pulse) VALUES (?, ?, ?, ?)
-					 ON CONFLICT(recorded_at) DO UPDATE SET
-					 systolic = excluded.systolic,
-					 diastolic = excluded.diastolic,
-					 pulse = excluded.pulse`
-				)
-				.bind(bp.recorded_at, bp.systolic, bp.diastolic, bp.pulse ?? null)
-				.run();
-			results.blood_pressure++;
+		// Insert blood pressure
+		if (body.blood_pressure && body.blood_pressure.length > 0) {
+			for (const bp of body.blood_pressure) {
+				await env.health_sync_db
+					.prepare(
+						`INSERT INTO blood_pressure (recorded_at, systolic, diastolic, pulse) VALUES (?, ?, ?, ?)
+						 ON CONFLICT(recorded_at) DO UPDATE SET
+						 systolic = excluded.systolic,
+						 diastolic = excluded.diastolic,
+						 pulse = excluded.pulse`
+					)
+					.bind(bp.recorded_at, bp.systolic, bp.diastolic, bp.pulse ?? null)
+					.run();
+				results.blood_pressure++;
+			}
 		}
-	}
 
-	// Insert sleep sessions
-	if (body.sleep_sessions && body.sleep_sessions.length > 0) {
-		for (const s of body.sleep_sessions) {
-			await env.health_sync_db
-				.prepare(
-					`INSERT INTO sleep_sessions (start_time, end_time, duration_hours) VALUES (?, ?, ?)
-					 ON CONFLICT(start_time) DO UPDATE SET
-					 end_time = excluded.end_time,
-					 duration_hours = excluded.duration_hours`
-				)
-				.bind(s.start_time, s.end_time, s.duration_hours ?? null)
-				.run();
+		// Insert sleep sessions
+		if (body.sleep_sessions && body.sleep_sessions.length > 0) {
+			for (const s of body.sleep_sessions) {
+				await env.health_sync_db
+					.prepare(
+						`INSERT INTO sleep_sessions (start_time, end_time, duration_hours) VALUES (?, ?, ?)
+						 ON CONFLICT(start_time) DO UPDATE SET
+						 end_time = excluded.end_time,
+						 duration_hours = excluded.duration_hours`
+					)
+					.bind(s.start_time, s.end_time, s.duration_hours ?? null)
+					.run();
 
-			if (s.stages && s.stages.length > 0) {
-				const session = await env.health_sync_db
-					.prepare('SELECT id FROM sleep_sessions WHERE start_time = ?')
-					.bind(s.start_time)
-					.first<{ id: number }>();
+				if (s.stages && s.stages.length > 0) {
+					const session = await env.health_sync_db
+						.prepare('SELECT id FROM sleep_sessions WHERE start_time = ?')
+						.bind(s.start_time)
+						.first<{ id: number }>();
 
-				if (session) {
-					await env.health_sync_db
-						.prepare('DELETE FROM sleep_stages WHERE sleep_session_id = ?')
-						.bind(session.id)
-						.run();
-
-					for (const stage of s.stages) {
+					if (session) {
 						await env.health_sync_db
-							.prepare(
-								'INSERT INTO sleep_stages (sleep_session_id, stage, start_time, end_time) VALUES (?, ?, ?, ?)'
-							)
-							.bind(session.id, stage.stage, stage.start_time, stage.end_time)
+							.prepare('DELETE FROM sleep_stages WHERE sleep_session_id = ?')
+							.bind(session.id)
 							.run();
+
+						for (const stage of s.stages) {
+							await env.health_sync_db
+								.prepare(
+									'INSERT INTO sleep_stages (sleep_session_id, stage, start_time, end_time) VALUES (?, ?, ?, ?)'
+								)
+								.bind(session.id, stage.stage, stage.start_time, stage.end_time)
+								.run();
+						}
 					}
 				}
+
+				results.sleep_sessions++;
 			}
-
-			results.sleep_sessions++;
 		}
-	}
 
-	// Insert steps
-	if (body.steps && body.steps.length > 0) {
-		for (const st of body.steps) {
-			await env.health_sync_db
-				.prepare(
-					`INSERT INTO steps (date, count) VALUES (?, ?)
-					 ON CONFLICT(date) DO UPDATE SET
-					 count = excluded.count`
-				)
-				.bind(st.date, st.count)
-				.run();
-			results.steps++;
+		// Insert steps
+		if (body.steps && body.steps.length > 0) {
+			for (const st of body.steps) {
+				await env.health_sync_db
+					.prepare(
+						`INSERT INTO steps (date, count) VALUES (?, ?)
+						 ON CONFLICT(date) DO UPDATE SET
+						 count = excluded.count`
+					)
+					.bind(st.date, st.count)
+					.run();
+				results.steps++;
+			}
 		}
+	} catch (error) {
+		console.error('Sync DB error:', error);
+		return errorResponse('Database operation failed', 500, { inserted: results });
 	}
 
 	return jsonResponse({
@@ -314,65 +332,67 @@ async function handleCpap(request: Request, env: Env): Promise<Response> {
 		return errorResponse('recorded_date is required', 400);
 	}
 
-	await env.health_sync_db
-		.prepare(
-			`INSERT INTO cpap_logs (
-				recorded_date, ahi, ai, leak, usage_hours, notes,
-				ai_count, hi_count, csa_count, snore_count,
-				ai_total_duration_sec, hi_total_duration_sec,
-				pressure_min, pressure_max, pressure_mean, pressure_median, pressure_p90, pressure_p95,
-				br_mean, br_median, tv_mean, tv_median
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			 ON CONFLICT(recorded_date) DO UPDATE SET
-			 ahi = excluded.ahi,
-			 ai = COALESCE(cpap_logs.ai, excluded.ai),
-			 leak = excluded.leak,
-			 usage_hours = excluded.usage_hours,
-			 notes = COALESCE(cpap_logs.notes, excluded.notes),
-			 ai_count = excluded.ai_count,
-			 hi_count = excluded.hi_count,
-			 csa_count = excluded.csa_count,
-			 snore_count = excluded.snore_count,
-			 ai_total_duration_sec = excluded.ai_total_duration_sec,
-			 hi_total_duration_sec = excluded.hi_total_duration_sec,
-			 pressure_min = excluded.pressure_min,
-			 pressure_max = excluded.pressure_max,
-			 pressure_mean = excluded.pressure_mean,
-			 pressure_median = excluded.pressure_median,
-			 pressure_p90 = excluded.pressure_p90,
-			 pressure_p95 = excluded.pressure_p95,
-			 br_mean = excluded.br_mean,
-			 br_median = excluded.br_median,
-			 tv_mean = excluded.tv_mean,
-			 tv_median = excluded.tv_median`
-		)
-		.bind(
-			body.recorded_date,
-			body.ahi ?? null,
-			body.ai ?? null,
-			body.leak ?? null,
-			body.usage_hours ?? null,
-			body.notes ?? null,
-			body.ai_count ?? null,
-			body.hi_count ?? null,
-			body.csa_count ?? null,
-			body.snore_count ?? null,
-			body.ai_total_duration_sec ?? null,
-			body.hi_total_duration_sec ?? null,
-			body.pressure_min ?? null,
-			body.pressure_max ?? null,
-			body.pressure_mean ?? null,
-			body.pressure_median ?? null,
-			body.pressure_p90 ?? null,
-			body.pressure_p95 ?? null,
-			body.br_mean ?? null,
-			body.br_median ?? null,
-			body.tv_mean ?? null,
-			body.tv_median ?? null
-		)
-		.run();
+	return withDbErrorHandling(async () => {
+		await env.health_sync_db
+			.prepare(
+				`INSERT INTO cpap_logs (
+					recorded_date, ahi, ai, leak, usage_hours, notes,
+					ai_count, hi_count, csa_count, snore_count,
+					ai_total_duration_sec, hi_total_duration_sec,
+					pressure_min, pressure_max, pressure_mean, pressure_median, pressure_p90, pressure_p95,
+					br_mean, br_median, tv_mean, tv_median
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				 ON CONFLICT(recorded_date) DO UPDATE SET
+				 ahi = excluded.ahi,
+				 ai = COALESCE(cpap_logs.ai, excluded.ai),
+				 leak = excluded.leak,
+				 usage_hours = excluded.usage_hours,
+				 notes = COALESCE(cpap_logs.notes, excluded.notes),
+				 ai_count = excluded.ai_count,
+				 hi_count = excluded.hi_count,
+				 csa_count = excluded.csa_count,
+				 snore_count = excluded.snore_count,
+				 ai_total_duration_sec = excluded.ai_total_duration_sec,
+				 hi_total_duration_sec = excluded.hi_total_duration_sec,
+				 pressure_min = excluded.pressure_min,
+				 pressure_max = excluded.pressure_max,
+				 pressure_mean = excluded.pressure_mean,
+				 pressure_median = excluded.pressure_median,
+				 pressure_p90 = excluded.pressure_p90,
+				 pressure_p95 = excluded.pressure_p95,
+				 br_mean = excluded.br_mean,
+				 br_median = excluded.br_median,
+				 tv_mean = excluded.tv_mean,
+				 tv_median = excluded.tv_median`
+			)
+			.bind(
+				body.recorded_date,
+				body.ahi ?? null,
+				body.ai ?? null,
+				body.leak ?? null,
+				body.usage_hours ?? null,
+				body.notes ?? null,
+				body.ai_count ?? null,
+				body.hi_count ?? null,
+				body.csa_count ?? null,
+				body.snore_count ?? null,
+				body.ai_total_duration_sec ?? null,
+				body.hi_total_duration_sec ?? null,
+				body.pressure_min ?? null,
+				body.pressure_max ?? null,
+				body.pressure_mean ?? null,
+				body.pressure_median ?? null,
+				body.pressure_p90 ?? null,
+				body.pressure_p95 ?? null,
+				body.br_mean ?? null,
+				body.br_median ?? null,
+				body.tv_mean ?? null,
+				body.tv_median ?? null
+			)
+			.run();
 
-	return jsonResponse({ success: true, recorded_date: body.recorded_date }, 201);
+		return jsonResponse({ success: true, recorded_date: body.recorded_date }, 201);
+	});
 }
 
 async function handleBloodTest(request: Request, env: Env): Promise<Response> {
@@ -387,42 +407,44 @@ async function handleBloodTest(request: Request, env: Env): Promise<Response> {
 		return errorResponse('test_date is required', 400);
 	}
 
-	await env.health_sync_db
-		.prepare(
-			`INSERT INTO blood_tests (test_date, facility, glucose, hba1c, hdl, ldl, tg, ua, cr, egfr, ast, alt, gtp)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			 ON CONFLICT(test_date) DO UPDATE SET
-			 facility = excluded.facility,
-			 glucose = excluded.glucose,
-			 hba1c = excluded.hba1c,
-			 hdl = excluded.hdl,
-			 ldl = excluded.ldl,
-			 tg = excluded.tg,
-			 ua = excluded.ua,
-			 cr = excluded.cr,
-			 egfr = excluded.egfr,
-			 ast = excluded.ast,
-			 alt = excluded.alt,
-			 gtp = excluded.gtp`
-		)
-		.bind(
-			body.test_date,
-			body.facility ?? null,
-			body.glucose ?? null,
-			body.hba1c ?? null,
-			body.hdl ?? null,
-			body.ldl ?? null,
-			body.tg ?? null,
-			body.ua ?? null,
-			body.cr ?? null,
-			body.egfr ?? null,
-			body.ast ?? null,
-			body.alt ?? null,
-			body.gtp ?? null
-		)
-		.run();
+	return withDbErrorHandling(async () => {
+		await env.health_sync_db
+			.prepare(
+				`INSERT INTO blood_tests (test_date, facility, glucose, hba1c, hdl, ldl, tg, ua, cr, egfr, ast, alt, gtp)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				 ON CONFLICT(test_date) DO UPDATE SET
+				 facility = excluded.facility,
+				 glucose = excluded.glucose,
+				 hba1c = excluded.hba1c,
+				 hdl = excluded.hdl,
+				 ldl = excluded.ldl,
+				 tg = excluded.tg,
+				 ua = excluded.ua,
+				 cr = excluded.cr,
+				 egfr = excluded.egfr,
+				 ast = excluded.ast,
+				 alt = excluded.alt,
+				 gtp = excluded.gtp`
+			)
+			.bind(
+				body.test_date,
+				body.facility ?? null,
+				body.glucose ?? null,
+				body.hba1c ?? null,
+				body.hdl ?? null,
+				body.ldl ?? null,
+				body.tg ?? null,
+				body.ua ?? null,
+				body.cr ?? null,
+				body.egfr ?? null,
+				body.ast ?? null,
+				body.alt ?? null,
+				body.gtp ?? null
+			)
+			.run();
 
-	return jsonResponse({ success: true, test_date: body.test_date }, 201);
+		return jsonResponse({ success: true, test_date: body.test_date }, 201);
+	});
 }
 
 async function handleGetBloodTest(request: Request, env: Env): Promise<Response> {
@@ -430,14 +452,16 @@ async function handleGetBloodTest(request: Request, env: Env): Promise<Response>
 	const range = parseDateRangeParams(url);
 	if (range.error) return range.error;
 
-	const { clause, params } = buildDateFilter('test_date', 'date', range);
-	const query = `SELECT * FROM blood_tests${clause} ORDER BY test_date ASC`;
-	const results = await env.health_sync_db
-		.prepare(query)
-		.bind(...params)
-		.all();
+	return withDbErrorHandling(async () => {
+		const { clause, params } = buildDateFilter('test_date', 'date', range);
+		const query = `SELECT * FROM blood_tests${clause} ORDER BY test_date ASC`;
+		const results = await env.health_sync_db
+			.prepare(query)
+			.bind(...params)
+			.all();
 
-	return jsonResponse({ blood_tests: results.results });
+		return jsonResponse({ blood_tests: results.results });
+	});
 }
 
 const VALID_MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
@@ -464,35 +488,37 @@ async function handlePostMeal(request: Request, env: Env): Promise<Response> {
 		return errorResponse('description is required', 400);
 	}
 
-	await env.health_sync_db
-		.prepare(
-			`INSERT INTO meals (date, meal_type, description, calories_kcal, protein_g, fat_g, carbs_g, fiber_g, salt_g, note)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			 ON CONFLICT(date, meal_type) DO UPDATE SET
-			 description = excluded.description,
-			 calories_kcal = excluded.calories_kcal,
-			 protein_g = excluded.protein_g,
-			 fat_g = excluded.fat_g,
-			 carbs_g = excluded.carbs_g,
-			 fiber_g = excluded.fiber_g,
-			 salt_g = excluded.salt_g,
-			 note = excluded.note`
-		)
-		.bind(
-			body.date,
-			body.meal_type,
-			body.description.trim(),
-			body.calories_kcal ?? null,
-			body.protein_g ?? null,
-			body.fat_g ?? null,
-			body.carbs_g ?? null,
-			body.fiber_g ?? null,
-			body.salt_g ?? null,
-			body.note ?? null
-		)
-		.run();
+	return withDbErrorHandling(async () => {
+		await env.health_sync_db
+			.prepare(
+				`INSERT INTO meals (date, meal_type, description, calories_kcal, protein_g, fat_g, carbs_g, fiber_g, salt_g, note)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				 ON CONFLICT(date, meal_type) DO UPDATE SET
+				 description = excluded.description,
+				 calories_kcal = excluded.calories_kcal,
+				 protein_g = excluded.protein_g,
+				 fat_g = excluded.fat_g,
+				 carbs_g = excluded.carbs_g,
+				 fiber_g = excluded.fiber_g,
+				 salt_g = excluded.salt_g,
+				 note = excluded.note`
+			)
+			.bind(
+				body.date,
+				body.meal_type,
+				body.description.trim(),
+				body.calories_kcal ?? null,
+				body.protein_g ?? null,
+				body.fat_g ?? null,
+				body.carbs_g ?? null,
+				body.fiber_g ?? null,
+				body.salt_g ?? null,
+				body.note ?? null
+			)
+			.run();
 
-	return jsonResponse({ success: true, date: body.date, meal_type: body.meal_type }, 201);
+		return jsonResponse({ success: true, date: body.date, meal_type: body.meal_type }, 201);
+	});
 }
 
 async function handleGetMeals(request: Request, env: Env): Promise<Response> {
@@ -500,20 +526,22 @@ async function handleGetMeals(request: Request, env: Env): Promise<Response> {
 	const range = parseDateRangeParams(url, 7);
 	if (range.error) return range.error;
 
-	const { clause, params } = buildDateFilter('date', 'date', range);
-	const query = `SELECT * FROM meals${clause} ORDER BY date ASC,
-		CASE meal_type
-			WHEN 'breakfast' THEN 1
-			WHEN 'lunch' THEN 2
-			WHEN 'dinner' THEN 3
-			WHEN 'snack' THEN 4
-		END ASC`;
-	const results = await env.health_sync_db
-		.prepare(query)
-		.bind(...params)
-		.all();
+	return withDbErrorHandling(async () => {
+		const { clause, params } = buildDateFilter('date', 'date', range);
+		const query = `SELECT * FROM meals${clause} ORDER BY date ASC,
+			CASE meal_type
+				WHEN 'breakfast' THEN 1
+				WHEN 'lunch' THEN 2
+				WHEN 'dinner' THEN 3
+				WHEN 'snack' THEN 4
+			END ASC`;
+		const results = await env.health_sync_db
+			.prepare(query)
+			.bind(...params)
+			.all();
 
-	return jsonResponse({ meals: results.results });
+		return jsonResponse({ meals: results.results });
+	});
 }
 
 async function handleMetrics(request: Request, env: Env): Promise<Response> {
@@ -521,58 +549,60 @@ async function handleMetrics(request: Request, env: Env): Promise<Response> {
 	const range = parseDateRangeParams(url, 7);
 	if (range.error) return range.error;
 
-	const bmFilter = buildDateFilter('recorded_at', 'datetime', range);
-	const bpFilter = buildDateFilter('recorded_at', 'datetime', range);
-	const ssFilter = buildDateFilter('start_time', 'datetime', range);
-	const stFilter = buildDateFilter('date', 'date', range);
-	const cpFilter = buildDateFilter('recorded_date', 'date', range);
-	const btFilter = buildDateFilter('test_date', 'date', range);
+	return withDbErrorHandling(async () => {
+		const bmFilter = buildDateFilter('recorded_at', 'datetime', range);
+		const bpFilter = buildDateFilter('recorded_at', 'datetime', range);
+		const ssFilter = buildDateFilter('start_time', 'datetime', range);
+		const stFilter = buildDateFilter('date', 'date', range);
+		const cpFilter = buildDateFilter('recorded_date', 'date', range);
+		const btFilter = buildDateFilter('test_date', 'date', range);
 
-	const [bodyMeasurements, bloodPressure, sleepSessions, steps, cpapLogs, bloodTests] =
-		await Promise.all([
-			env.health_sync_db
-				.prepare(`SELECT * FROM body_measurements${bmFilter.clause} ORDER BY recorded_at DESC`)
-				.bind(...bmFilter.params)
-				.all(),
-			env.health_sync_db
-				.prepare(`SELECT * FROM blood_pressure${bpFilter.clause} ORDER BY recorded_at DESC`)
-				.bind(...bpFilter.params)
-				.all(),
-			env.health_sync_db
-				.prepare(`SELECT * FROM sleep_sessions${ssFilter.clause} ORDER BY start_time DESC`)
-				.bind(...ssFilter.params)
-				.all(),
-			env.health_sync_db
-				.prepare(`SELECT * FROM steps${stFilter.clause} ORDER BY date DESC`)
-				.bind(...stFilter.params)
-				.all(),
-			env.health_sync_db
-				.prepare(`SELECT * FROM cpap_logs${cpFilter.clause} ORDER BY recorded_date DESC`)
-				.bind(...cpFilter.params)
-				.all(),
-			env.health_sync_db
-				.prepare(`SELECT * FROM blood_tests${btFilter.clause} ORDER BY test_date DESC`)
-				.bind(...btFilter.params)
-				.all(),
-		]);
+		const [bodyMeasurements, bloodPressure, sleepSessions, steps, cpapLogs, bloodTests] =
+			await Promise.all([
+				env.health_sync_db
+					.prepare(`SELECT * FROM body_measurements${bmFilter.clause} ORDER BY recorded_at DESC`)
+					.bind(...bmFilter.params)
+					.all(),
+				env.health_sync_db
+					.prepare(`SELECT * FROM blood_pressure${bpFilter.clause} ORDER BY recorded_at DESC`)
+					.bind(...bpFilter.params)
+					.all(),
+				env.health_sync_db
+					.prepare(`SELECT * FROM sleep_sessions${ssFilter.clause} ORDER BY start_time DESC`)
+					.bind(...ssFilter.params)
+					.all(),
+				env.health_sync_db
+					.prepare(`SELECT * FROM steps${stFilter.clause} ORDER BY date DESC`)
+					.bind(...stFilter.params)
+					.all(),
+				env.health_sync_db
+					.prepare(`SELECT * FROM cpap_logs${cpFilter.clause} ORDER BY recorded_date DESC`)
+					.bind(...cpFilter.params)
+					.all(),
+				env.health_sync_db
+					.prepare(`SELECT * FROM blood_tests${btFilter.clause} ORDER BY test_date DESC`)
+					.bind(...btFilter.params)
+					.all(),
+			]);
 
-	const sleepSessionsWithStages = await Promise.all(
-		(sleepSessions.results as Record<string, unknown>[]).map(async (session) => {
-			const stages = await env.health_sync_db
-				.prepare('SELECT stage, start_time, end_time FROM sleep_stages WHERE sleep_session_id = ? ORDER BY start_time ASC')
-				.bind(session.id)
-				.all();
-			return { ...session, stages: stages.results };
-		})
-	);
+		const sleepSessionsWithStages = await Promise.all(
+			(sleepSessions.results as Record<string, unknown>[]).map(async (session) => {
+				const stages = await env.health_sync_db
+					.prepare('SELECT stage, start_time, end_time FROM sleep_stages WHERE sleep_session_id = ? ORDER BY start_time ASC')
+					.bind(session.id)
+					.all();
+				return { ...session, stages: stages.results };
+			})
+		);
 
-	return jsonResponse({
-		body_measurements: bodyMeasurements.results,
-		blood_pressure: bloodPressure.results,
-		sleep_sessions: sleepSessionsWithStages,
-		steps: steps.results,
-		cpap_logs: cpapLogs.results,
-		blood_tests: bloodTests.results,
+		return jsonResponse({
+			body_measurements: bodyMeasurements.results,
+			blood_pressure: bloodPressure.results,
+			sleep_sessions: sleepSessionsWithStages,
+			steps: steps.results,
+			cpap_logs: cpapLogs.results,
+			blood_tests: bloodTests.results,
+		});
 	});
 }
 
@@ -630,10 +660,13 @@ export default {
 
 			return errorResponse('Not found', 404);
 		} catch (error) {
-			console.error('Error:', error);
-			const message =
-				error instanceof Error ? error.message : 'Internal server error';
-			return errorResponse(message, 500);
+			console.error('Unhandled error:', error);
+			const isDbError = error instanceof Error &&
+				(error.message.includes('D1') || error.message.includes('SQLITE'));
+			return errorResponse(
+				isDbError ? 'Database operation failed' : 'Internal server error',
+				500
+			);
 		}
 	},
 } satisfies ExportedHandler<Env>;
