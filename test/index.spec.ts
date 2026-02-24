@@ -803,6 +803,94 @@ describe('Health Sync API', () => {
 		});
 	});
 
+	describe('Error handling', () => {
+		it('returns 500 with generic message on DB error (does not leak internals)', async () => {
+			// Drop a table to simulate DB error
+			await env.health_sync_db.prepare('DROP TABLE IF EXISTS steps').run();
+
+			const response = await makeRequest('/sync', {
+				method: 'POST',
+				body: {
+					steps: [{ date: '2020-01-01', count: 1000 }],
+				},
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(500);
+			const data = await response.json<AnyJson>();
+			expect(data.error).toBe('Database operation failed');
+			// Should NOT contain raw SQL error details
+			expect(data.error).not.toMatch(/no such table/i);
+
+			// Recreate table for other tests
+			await env.health_sync_db.prepare(`
+				CREATE TABLE IF NOT EXISTS steps (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					date TEXT NOT NULL,
+					count INTEGER NOT NULL,
+					created_at TEXT DEFAULT CURRENT_TIMESTAMP
+				)
+			`).run();
+			await env.health_sync_db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_steps_date ON steps(date)').run();
+		});
+
+		it('returns 500 with generic message on GET /metrics DB error', async () => {
+			await env.health_sync_db.prepare('DROP TABLE IF EXISTS body_measurements').run();
+
+			const response = await makeRequest('/metrics?days=7', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(500);
+			const data = await response.json<AnyJson>();
+			expect(data.error).toBe('Database operation failed');
+
+			// Recreate table for other tests
+			await env.health_sync_db.prepare(`
+				CREATE TABLE IF NOT EXISTS body_measurements (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					recorded_at TEXT NOT NULL,
+					weight_kg REAL,
+					body_fat_percent REAL,
+					created_at TEXT DEFAULT CURRENT_TIMESTAMP
+				)
+			`).run();
+			await env.health_sync_db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_body_measurements_recorded_at ON body_measurements(recorded_at)').run();
+		});
+
+		it('returns partial success info when sync fails mid-batch', async () => {
+			// First, sync one valid step
+			// Then send a batch where second item causes an error
+			await env.health_sync_db.prepare('DROP TABLE IF EXISTS steps').run();
+
+			const response = await makeRequest('/sync', {
+				method: 'POST',
+				body: {
+					body_measurements: [
+						{ recorded_at: '2020-09-01T10:00:00Z', weight_kg: 70.0 },
+					],
+					steps: [{ date: '2020-09-01', count: 5000 }],
+				},
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(500);
+			const data = await response.json<AnyJson>();
+			expect(data.error).toBe('Database operation failed');
+			// Should include partial results so client knows what succeeded
+			expect(data.inserted).toBeDefined();
+			expect(data.inserted.body_measurements).toBe(1);
+
+			// Recreate table for other tests
+			await env.health_sync_db.prepare(`
+				CREATE TABLE IF NOT EXISTS steps (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					date TEXT NOT NULL,
+					count INTEGER NOT NULL,
+					created_at TEXT DEFAULT CURRENT_TIMESTAMP
+				)
+			`).run();
+			await env.health_sync_db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_steps_date ON steps(date)').run();
+		});
+	});
+
 	describe('404 handling', () => {
 		it('returns 404 for unknown routes', async () => {
 			const response = await makeRequest('/unknown');
