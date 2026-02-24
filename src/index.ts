@@ -11,10 +11,17 @@ interface BloodPressure {
 	pulse?: number;
 }
 
+interface SleepStage {
+	stage: string;
+	start_time: string;
+	end_time: string;
+}
+
 interface SleepSession {
 	start_time: string;
 	end_time: string;
 	duration_hours?: number;
+	stages?: SleepStage[];
 }
 
 interface Steps {
@@ -246,6 +253,30 @@ async function handleSync(request: Request, env: Env): Promise<Response> {
 				)
 				.bind(s.start_time, s.end_time, s.duration_hours ?? null)
 				.run();
+
+			if (s.stages && s.stages.length > 0) {
+				const session = await env.health_sync_db
+					.prepare('SELECT id FROM sleep_sessions WHERE start_time = ?')
+					.bind(s.start_time)
+					.first<{ id: number }>();
+
+				if (session) {
+					await env.health_sync_db
+						.prepare('DELETE FROM sleep_stages WHERE sleep_session_id = ?')
+						.bind(session.id)
+						.run();
+
+					for (const stage of s.stages) {
+						await env.health_sync_db
+							.prepare(
+								'INSERT INTO sleep_stages (sleep_session_id, stage, start_time, end_time) VALUES (?, ?, ?, ?)'
+							)
+							.bind(session.id, stage.stage, stage.start_time, stage.end_time)
+							.run();
+					}
+				}
+			}
+
 			results.sleep_sessions++;
 		}
 	}
@@ -525,10 +556,20 @@ async function handleMetrics(request: Request, env: Env): Promise<Response> {
 				.all(),
 		]);
 
+	const sleepSessionsWithStages = await Promise.all(
+		(sleepSessions.results as Record<string, unknown>[]).map(async (session) => {
+			const stages = await env.health_sync_db
+				.prepare('SELECT stage, start_time, end_time FROM sleep_stages WHERE sleep_session_id = ? ORDER BY start_time ASC')
+				.bind(session.id)
+				.all();
+			return { ...session, stages: stages.results };
+		})
+	);
+
 	return jsonResponse({
 		body_measurements: bodyMeasurements.results,
 		blood_pressure: bloodPressure.results,
-		sleep_sessions: sleepSessions.results,
+		sleep_sessions: sleepSessionsWithStages,
 		steps: steps.results,
 		cpap_logs: cpapLogs.results,
 		blood_tests: bloodTests.results,

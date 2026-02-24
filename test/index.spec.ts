@@ -352,6 +352,70 @@ describe('Health Sync API', () => {
 			expect(Array.isArray(data.blood_tests)).toBe(true);
 		});
 
+		it('returns sleep stages nested in sleep_sessions', async () => {
+			await makeRequest('/sync', {
+				method: 'POST',
+				body: {
+					sleep_sessions: [
+						{
+							start_time: '2020-08-01T23:00:00Z',
+							end_time: '2020-08-02T07:00:00Z',
+							duration_hours: 8.0,
+							stages: [
+								{ stage: 'light', start_time: '2020-08-01T23:00:00Z', end_time: '2020-08-01T23:45:00Z' },
+								{ stage: 'deep', start_time: '2020-08-01T23:45:00Z', end_time: '2020-08-02T01:00:00Z' },
+							],
+						},
+					],
+				},
+				headers: createAuthHeaders(),
+			});
+
+			const response = await makeRequest('/metrics?from=2020-08-01', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(200);
+			const data = await response.json<AnyJson>();
+
+			const session = data.sleep_sessions.find(
+				(s: AnyJson) => s.start_time === '2020-08-01T23:00:00Z'
+			);
+			expect(session).toBeDefined();
+			expect(session.stages).toBeDefined();
+			expect(session.stages.length).toBe(2);
+			expect(session.stages[0].stage).toBe('light');
+			expect(session.stages[1].stage).toBe('deep');
+		});
+
+		it('returns empty stages array for sleep sessions without stages', async () => {
+			await makeRequest('/sync', {
+				method: 'POST',
+				body: {
+					sleep_sessions: [
+						{
+							start_time: '2020-08-05T22:00:00Z',
+							end_time: '2020-08-06T06:00:00Z',
+							duration_hours: 8.0,
+						},
+					],
+				},
+				headers: createAuthHeaders(),
+			});
+
+			const response = await makeRequest('/metrics?from=2020-08-05', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(200);
+			const data = await response.json<AnyJson>();
+
+			const session = data.sleep_sessions.find(
+				(s: AnyJson) => s.start_time === '2020-08-05T22:00:00Z'
+			);
+			expect(session).toBeDefined();
+			expect(session.stages).toBeDefined();
+			expect(session.stages).toEqual([]);
+		});
+
 		it('returns all health data types', async () => {
 			const response = await makeRequest('/metrics?days=7', {
 				headers: createAuthHeaders(),
@@ -441,6 +505,166 @@ describe('Health Sync API', () => {
 				headers: { 'Content-Type': 'application/json' },
 			});
 			expect(response.status).toBe(401);
+		});
+
+		it('syncs sleep sessions with stages', async () => {
+			const response = await makeRequest('/sync', {
+				method: 'POST',
+				body: {
+					sleep_sessions: [
+						{
+							start_time: '2020-07-10T23:00:00Z',
+							end_time: '2020-07-11T07:00:00Z',
+							duration_hours: 8.0,
+							stages: [
+								{ stage: 'light', start_time: '2020-07-10T23:00:00Z', end_time: '2020-07-10T23:30:00Z' },
+								{ stage: 'deep', start_time: '2020-07-10T23:30:00Z', end_time: '2020-07-11T00:30:00Z' },
+								{ stage: 'rem', start_time: '2020-07-11T00:30:00Z', end_time: '2020-07-11T01:00:00Z' },
+								{ stage: 'awake', start_time: '2020-07-11T01:00:00Z', end_time: '2020-07-11T01:05:00Z' },
+							],
+						},
+					],
+				},
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(200);
+			const data = await response.json<AnyJson>();
+			expect(data.success).toBe(true);
+			expect(data.inserted.sleep_sessions).toBe(1);
+
+			const session = await env.health_sync_db
+				.prepare('SELECT id FROM sleep_sessions WHERE start_time = ?')
+				.bind('2020-07-10T23:00:00Z')
+				.first<{ id: number }>();
+			expect(session).not.toBeNull();
+
+			const stages = await env.health_sync_db
+				.prepare('SELECT * FROM sleep_stages WHERE sleep_session_id = ? ORDER BY start_time ASC')
+				.bind(session!.id)
+				.all();
+			expect(stages.results.length).toBe(4);
+			expect(stages.results[0].stage).toBe('light');
+			expect(stages.results[1].stage).toBe('deep');
+			expect(stages.results[2].stage).toBe('rem');
+			expect(stages.results[3].stage).toBe('awake');
+		});
+
+		it('syncs sleep sessions without stages (backward compatibility)', async () => {
+			const response = await makeRequest('/sync', {
+				method: 'POST',
+				body: {
+					sleep_sessions: [
+						{
+							start_time: '2020-07-12T22:00:00Z',
+							end_time: '2020-07-13T06:00:00Z',
+							duration_hours: 8.0,
+						},
+					],
+				},
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(200);
+			const data = await response.json<AnyJson>();
+			expect(data.success).toBe(true);
+			expect(data.inserted.sleep_sessions).toBe(1);
+		});
+
+		it('replaces stages on sleep session upsert', async () => {
+			const startTime = '2020-07-15T23:00:00Z';
+
+			await makeRequest('/sync', {
+				method: 'POST',
+				body: {
+					sleep_sessions: [
+						{
+							start_time: startTime,
+							end_time: '2020-07-16T07:00:00Z',
+							duration_hours: 8.0,
+							stages: [
+								{ stage: 'light', start_time: '2020-07-15T23:00:00Z', end_time: '2020-07-15T23:30:00Z' },
+								{ stage: 'deep', start_time: '2020-07-15T23:30:00Z', end_time: '2020-07-16T00:00:00Z' },
+							],
+						},
+					],
+				},
+				headers: createAuthHeaders(),
+			});
+
+			await makeRequest('/sync', {
+				method: 'POST',
+				body: {
+					sleep_sessions: [
+						{
+							start_time: startTime,
+							end_time: '2020-07-16T07:30:00Z',
+							duration_hours: 8.5,
+							stages: [
+								{ stage: 'rem', start_time: '2020-07-15T23:00:00Z', end_time: '2020-07-16T00:00:00Z' },
+							],
+						},
+					],
+				},
+				headers: createAuthHeaders(),
+			});
+
+			const session = await env.health_sync_db
+				.prepare('SELECT id FROM sleep_sessions WHERE start_time = ?')
+				.bind(startTime)
+				.first<{ id: number }>();
+
+			const stages = await env.health_sync_db
+				.prepare('SELECT * FROM sleep_stages WHERE sleep_session_id = ?')
+				.bind(session!.id)
+				.all();
+			expect(stages.results.length).toBe(1);
+			expect(stages.results[0].stage).toBe('rem');
+		});
+
+		it('preserves existing stages when stages not provided in upsert', async () => {
+			const startTime = '2020-07-18T22:00:00Z';
+
+			await makeRequest('/sync', {
+				method: 'POST',
+				body: {
+					sleep_sessions: [
+						{
+							start_time: startTime,
+							end_time: '2020-07-19T06:00:00Z',
+							duration_hours: 8.0,
+							stages: [
+								{ stage: 'deep', start_time: '2020-07-18T22:00:00Z', end_time: '2020-07-18T23:00:00Z' },
+							],
+						},
+					],
+				},
+				headers: createAuthHeaders(),
+			});
+
+			await makeRequest('/sync', {
+				method: 'POST',
+				body: {
+					sleep_sessions: [
+						{
+							start_time: startTime,
+							end_time: '2020-07-19T06:30:00Z',
+							duration_hours: 8.5,
+						},
+					],
+				},
+				headers: createAuthHeaders(),
+			});
+
+			const session = await env.health_sync_db
+				.prepare('SELECT id FROM sleep_sessions WHERE start_time = ?')
+				.bind(startTime)
+				.first<{ id: number }>();
+
+			const stages = await env.health_sync_db
+				.prepare('SELECT * FROM sleep_stages WHERE sleep_session_id = ?')
+				.bind(session!.id)
+				.all();
+			expect(stages.results.length).toBe(1);
+			expect(stages.results[0].stage).toBe('deep');
 		});
 
 		it('syncs body measurements', async () => {
