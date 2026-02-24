@@ -549,6 +549,59 @@ describe('Health Sync API', () => {
 			expect(stages.results[3].stage).toBe('awake');
 		});
 
+		it('merges consecutive same-type stages', async () => {
+			const response = await makeRequest('/sync', {
+				method: 'POST',
+				body: {
+					sleep_sessions: [
+						{
+							start_time: '2020-07-20T23:00:00Z',
+							end_time: '2020-07-21T07:00:00Z',
+							duration_hours: 8.0,
+							stages: [
+								{ stage: 'light', start_time: '2020-07-20T23:00:00Z', end_time: '2020-07-20T23:01:00Z' },
+								{ stage: 'light', start_time: '2020-07-20T23:01:00Z', end_time: '2020-07-20T23:02:00Z' },
+								{ stage: 'light', start_time: '2020-07-20T23:02:00Z', end_time: '2020-07-20T23:03:00Z' },
+								{ stage: 'deep', start_time: '2020-07-20T23:03:00Z', end_time: '2020-07-20T23:04:00Z' },
+								{ stage: 'deep', start_time: '2020-07-20T23:04:00Z', end_time: '2020-07-20T23:05:00Z' },
+								{ stage: 'light', start_time: '2020-07-20T23:05:00Z', end_time: '2020-07-20T23:06:00Z' },
+								{ stage: 'rem', start_time: '2020-07-20T23:06:00Z', end_time: '2020-07-20T23:07:00Z' },
+								{ stage: 'rem', start_time: '2020-07-20T23:07:00Z', end_time: '2020-07-20T23:08:00Z' },
+								{ stage: 'rem', start_time: '2020-07-20T23:08:00Z', end_time: '2020-07-20T23:09:00Z' },
+							],
+						},
+					],
+				},
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(200);
+
+			const session = await env.health_sync_db
+				.prepare('SELECT id FROM sleep_sessions WHERE start_time = ?')
+				.bind('2020-07-20T23:00:00Z')
+				.first<{ id: number }>();
+
+			const stages = await env.health_sync_db
+				.prepare('SELECT * FROM sleep_stages WHERE sleep_session_id = ? ORDER BY start_time ASC')
+				.bind(session!.id)
+				.all();
+
+			// 9 raw stages → 4 merged stages (light, deep, light, rem)
+			expect(stages.results.length).toBe(4);
+			expect(stages.results[0].stage).toBe('light');
+			expect(stages.results[0].start_time).toBe('2020-07-20T23:00:00Z');
+			expect(stages.results[0].end_time).toBe('2020-07-20T23:03:00Z');
+			expect(stages.results[1].stage).toBe('deep');
+			expect(stages.results[1].start_time).toBe('2020-07-20T23:03:00Z');
+			expect(stages.results[1].end_time).toBe('2020-07-20T23:05:00Z');
+			expect(stages.results[2].stage).toBe('light');
+			expect(stages.results[2].start_time).toBe('2020-07-20T23:05:00Z');
+			expect(stages.results[2].end_time).toBe('2020-07-20T23:06:00Z');
+			expect(stages.results[3].stage).toBe('rem');
+			expect(stages.results[3].start_time).toBe('2020-07-20T23:06:00Z');
+			expect(stages.results[3].end_time).toBe('2020-07-20T23:09:00Z');
+		});
+
 		it('syncs sleep sessions without stages (backward compatibility)', async () => {
 			const response = await makeRequest('/sync', {
 				method: 'POST',

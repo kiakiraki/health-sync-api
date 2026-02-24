@@ -90,6 +90,21 @@ interface SyncRequest {
 	steps?: Steps[];
 }
 
+function mergeConsecutiveStages(stages: SleepStage[]): SleepStage[] {
+	if (stages.length === 0) return [];
+	const sorted = [...stages].sort((a, b) => a.start_time.localeCompare(b.start_time));
+	const merged: SleepStage[] = [{ ...sorted[0] }];
+	for (let i = 1; i < sorted.length; i++) {
+		const last = merged[merged.length - 1];
+		if (sorted[i].stage === last.stage) {
+			last.end_time = sorted[i].end_time;
+		} else {
+			merged.push({ ...sorted[i] });
+		}
+	}
+	return merged;
+}
+
 function jsonResponse(data: unknown, status = 200): Response {
 	return new Response(JSON.stringify(data), {
 		status,
@@ -275,19 +290,19 @@ async function handleSync(request: Request, env: Env): Promise<Response> {
 						.first<{ id: number }>();
 
 					if (session) {
-						await env.health_sync_db
-							.prepare('DELETE FROM sleep_stages WHERE sleep_session_id = ?')
-							.bind(session.id)
-							.run();
-
-						for (const stage of s.stages) {
-							await env.health_sync_db
-								.prepare(
-									'INSERT INTO sleep_stages (sleep_session_id, stage, start_time, end_time) VALUES (?, ?, ?, ?)'
-								)
-								.bind(session.id, stage.stage, stage.start_time, stage.end_time)
-								.run();
-						}
+						const merged = mergeConsecutiveStages(s.stages);
+						await env.health_sync_db.batch([
+							env.health_sync_db
+								.prepare('DELETE FROM sleep_stages WHERE sleep_session_id = ?')
+								.bind(session.id),
+							...merged.map((stage) =>
+								env.health_sync_db
+									.prepare(
+										'INSERT INTO sleep_stages (sleep_session_id, stage, start_time, end_time) VALUES (?, ?, ?, ?)'
+									)
+									.bind(session.id, stage.stage, stage.start_time, stage.end_time)
+							),
+						]);
 					}
 				}
 
