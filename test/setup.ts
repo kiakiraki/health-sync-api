@@ -100,6 +100,19 @@ const setupDatabase = async () => {
 	await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_blood_pressure_recorded_at ON blood_pressure(recorded_at)`).run();
 	await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_sleep_sessions_start_time ON sleep_sessions(start_time)`).run();
 	await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_steps_date ON steps(date)`).run();
+
+	await db.prepare(`
+		CREATE TABLE IF NOT EXISTS sleep_stages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			sleep_session_id INTEGER NOT NULL,
+			stage TEXT NOT NULL,
+			start_time TEXT NOT NULL,
+			end_time TEXT NOT NULL,
+			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (sleep_session_id) REFERENCES sleep_sessions(id) ON DELETE CASCADE
+		)
+	`).run();
+	await db.prepare(`CREATE INDEX IF NOT EXISTS idx_sleep_stages_session_id ON sleep_stages(sleep_session_id)`).run();
 	await db.prepare(`CREATE INDEX IF NOT EXISTS idx_blood_tests_date ON blood_tests(test_date)`).run();
 
 	await db.prepare(`
