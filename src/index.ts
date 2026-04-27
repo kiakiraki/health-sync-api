@@ -600,15 +600,41 @@ async function handleMetrics(request: Request, env: Env): Promise<Response> {
 					.all(),
 			]);
 
-		const sleepSessionsWithStages = await Promise.all(
-			(sleepSessions.results as Record<string, unknown>[]).map(async (session) => {
-				const stages = await env.health_sync_db
-					.prepare('SELECT stage, start_time, end_time FROM sleep_stages WHERE sleep_session_id = ? ORDER BY start_time ASC')
-					.bind(session.id)
-					.all();
-				return { ...session, stages: stages.results };
-			})
-		);
+		const sessionRows = sleepSessions.results as Record<string, unknown>[];
+		const stagesBySessionId = new Map<
+			number,
+			Array<{ stage: string; start_time: string; end_time: string }>
+		>();
+
+		if (sessionRows.length > 0) {
+			const sessionIds = sessionRows.map((s) => s.id as number);
+			const placeholders = sessionIds.map(() => '?').join(',');
+			const allStages = await env.health_sync_db
+				.prepare(
+					`SELECT sleep_session_id, stage, start_time, end_time
+					 FROM sleep_stages
+					 WHERE sleep_session_id IN (${placeholders})
+					 ORDER BY start_time ASC`
+				)
+				.bind(...sessionIds)
+				.all<{
+					sleep_session_id: number;
+					stage: string;
+					start_time: string;
+					end_time: string;
+				}>();
+
+			for (const row of allStages.results) {
+				const list = stagesBySessionId.get(row.sleep_session_id) ?? [];
+				list.push({ stage: row.stage, start_time: row.start_time, end_time: row.end_time });
+				stagesBySessionId.set(row.sleep_session_id, list);
+			}
+		}
+
+		const sleepSessionsWithStages = sessionRows.map((session) => ({
+			...session,
+			stages: stagesBySessionId.get(session.id as number) ?? [],
+		}));
 
 		return jsonResponse({
 			body_measurements: bodyMeasurements.results,
