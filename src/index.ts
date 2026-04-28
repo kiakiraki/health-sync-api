@@ -158,8 +158,12 @@ function parseDateRangeParams(url: URL, defaultDays?: number): { from?: string; 
 
 	// days parameter
 	if (daysParam) {
+		// /^\d+$/ before parseInt — parseInt('7abc') would silently return 7.
+		if (!/^\d+$/.test(daysParam)) {
+			return { error: errorResponse('Invalid days parameter (must be a positive integer)', 400) };
+		}
 		const days = parseInt(daysParam, 10);
-		if (isNaN(days) || days < 1) {
+		if (days < 1) {
 			return { error: errorResponse('Invalid days parameter (must be a positive integer)', 400) };
 		}
 		return { from: daysAgoDate(days) };
@@ -183,12 +187,19 @@ function buildDateFilter(
 
 	if (range.from) {
 		conditions.push(`${column} >= ?`);
-		params.push(type === 'datetime' ? `${range.from} 00:00:00` : range.from);
+		// datetime columns are stored as ISO 8601 ('YYYY-MM-DDTHH:MM:SSZ').
+		// Use the same separator and Z suffix so ASCII string comparison stays correct
+		// (T > space, so a 'YYYY-MM-DD 00:00:00' lower bound also works for >=, but
+		// matching the stored shape avoids surprises).
+		params.push(type === 'datetime' ? `${range.from}T00:00:00Z` : range.from);
 	}
 
 	if (range.to) {
 		conditions.push(`${column} <= ?`);
-		params.push(type === 'datetime' ? `${range.to} 23:59:59` : range.to);
+		// For datetime: 'YYYY-MM-DDT23:59:59.999Z' — strictly greater than any
+		// 'YYYY-MM-DDTHH:MM:SSZ' on the same day in ASCII order. Using a space
+		// separator here would silently drop same-day rows because 'T' > ' '.
+		params.push(type === 'datetime' ? `${range.to}T23:59:59.999Z` : range.to);
 	}
 
 	const clause = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
