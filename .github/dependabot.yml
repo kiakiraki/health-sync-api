@@ -1,28 +1,28 @@
 version: 2
 updates:
-  - package-ecosystem: "npm"
-    directory: "/"
+  - package-ecosystem: 'npm'
+    directory: '/'
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: 'weekly'
+      day: 'monday'
     open-pull-requests-limit: 10
     groups:
       cloudflare:
         patterns:
-          - "wrangler"
+          - 'wrangler'
       testing:
         patterns:
-          - "vitest"
-          - "@vitest/*"
-          - "@cloudflare/vitest-pool-workers"
+          - 'vitest'
+          - '@vitest/*'
+          - '@cloudflare/vitest-pool-workers'
     labels:
-      - "dependencies"
+      - 'dependencies'
 
-  - package-ecosystem: "github-actions"
-    directory: "/"
+  - package-ecosystem: 'github-actions'
+    directory: '/'
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: 'weekly'
+      day: 'monday'
     labels:
-      - "dependencies"
-      - "github-actions"
+      - 'dependencies'
+      - 'github-actions'

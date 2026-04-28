@@ -11,7 +11,7 @@ const API_KEY = 'dev-local-key';
 
 function createAuthHeaders() {
 	return {
-		'Authorization': `Bearer ${API_KEY}`,
+		Authorization: `Bearer ${API_KEY}`,
 		'Content-Type': 'application/json',
 	};
 }
@@ -22,7 +22,7 @@ async function makeRequest(
 		method?: string;
 		body?: unknown;
 		headers?: Record<string, string>;
-	} = {}
+	} = {},
 ) {
 	const { method = 'GET', body, headers = {} } = options;
 	const request = new IncomingRequest(`http://example.com${path}`, {
@@ -109,10 +109,7 @@ describe('Health Sync API', () => {
 			expect(data.test_date).toBe(testDate);
 
 			// Verify data was stored
-			const result = await env.health_sync_db
-				.prepare('SELECT * FROM blood_tests WHERE test_date = ?')
-				.bind(testDate)
-				.first();
+			const result = await env.health_sync_db.prepare('SELECT * FROM blood_tests WHERE test_date = ?').bind(testDate).first();
 			expect(result).not.toBeNull();
 			expect(result!.glucose).toBe(95);
 			expect(result!.hba1c).toBe(5.6);
@@ -147,10 +144,7 @@ describe('Health Sync API', () => {
 			expect(response.status).toBe(201);
 
 			// Verify record was updated
-			const result = await env.health_sync_db
-				.prepare('SELECT * FROM blood_tests WHERE test_date = ?')
-				.bind(testDate)
-				.first();
+			const result = await env.health_sync_db.prepare('SELECT * FROM blood_tests WHERE test_date = ?').bind(testDate).first();
 			expect(result!.glucose).toBe(100);
 			expect(result!.hba1c).toBe(5.8);
 			expect(result!.ldl).toBe(130);
@@ -165,10 +159,7 @@ describe('Health Sync API', () => {
 			});
 			expect(response.status).toBe(201);
 
-			const result = await env.health_sync_db
-				.prepare('SELECT * FROM blood_tests WHERE test_date = ?')
-				.bind(testDate)
-				.first();
+			const result = await env.health_sync_db.prepare('SELECT * FROM blood_tests WHERE test_date = ?').bind(testDate).first();
 			expect(result).not.toBeNull();
 			expect(result!.glucose).toBeNull();
 		});
@@ -291,11 +282,7 @@ describe('Health Sync API', () => {
 			});
 			expect(response.status).toBe(200);
 			const data = await response.json<AnyJson>();
-			expect(
-				data.blood_tests.every(
-					(t: AnyJson) => t.test_date >= '2020-03-01' && t.test_date <= '2020-05-01'
-				)
-			).toBe(true);
+			expect(data.blood_tests.every((t: AnyJson) => t.test_date >= '2020-03-01' && t.test_date <= '2020-05-01')).toBe(true);
 		});
 
 		it('from/to takes priority over days', async () => {
@@ -377,9 +364,7 @@ describe('Health Sync API', () => {
 			expect(response.status).toBe(200);
 			const data = await response.json<AnyJson>();
 
-			const session = data.sleep_sessions.find(
-				(s: AnyJson) => s.start_time === '2020-08-01T23:00:00Z'
-			);
+			const session = data.sleep_sessions.find((s: AnyJson) => s.start_time === '2020-08-01T23:00:00Z');
 			expect(session).toBeDefined();
 			expect(session.stages).toBeDefined();
 			expect(session.stages.length).toBe(2);
@@ -408,9 +393,7 @@ describe('Health Sync API', () => {
 			expect(response.status).toBe(200);
 			const data = await response.json<AnyJson>();
 
-			const session = data.sleep_sessions.find(
-				(s: AnyJson) => s.start_time === '2020-08-05T22:00:00Z'
-			);
+			const session = data.sleep_sessions.find((s: AnyJson) => s.start_time === '2020-08-05T22:00:00Z');
 			expect(session).toBeDefined();
 			expect(session.stages).toBeDefined();
 			expect(session.stages).toEqual([]);
@@ -651,9 +634,7 @@ describe('Health Sync API', () => {
 							start_time: startTime,
 							end_time: '2020-07-16T07:30:00Z',
 							duration_hours: 8.5,
-							stages: [
-								{ stage: 'rem', start_time: '2020-07-15T23:00:00Z', end_time: '2020-07-16T00:00:00Z' },
-							],
+							stages: [{ stage: 'rem', start_time: '2020-07-15T23:00:00Z', end_time: '2020-07-16T00:00:00Z' }],
 						},
 					],
 				},
@@ -665,10 +646,7 @@ describe('Health Sync API', () => {
 				.bind(startTime)
 				.first<{ id: number }>();
 
-			const stages = await env.health_sync_db
-				.prepare('SELECT * FROM sleep_stages WHERE sleep_session_id = ?')
-				.bind(session!.id)
-				.all();
+			const stages = await env.health_sync_db.prepare('SELECT * FROM sleep_stages WHERE sleep_session_id = ?').bind(session!.id).all();
 			expect(stages.results.length).toBe(1);
 			expect(stages.results[0].stage).toBe('rem');
 		});
@@ -684,9 +662,7 @@ describe('Health Sync API', () => {
 							start_time: startTime,
 							end_time: '2020-07-19T06:00:00Z',
 							duration_hours: 8.0,
-							stages: [
-								{ stage: 'deep', start_time: '2020-07-18T22:00:00Z', end_time: '2020-07-18T23:00:00Z' },
-							],
+							stages: [{ stage: 'deep', start_time: '2020-07-18T22:00:00Z', end_time: '2020-07-18T23:00:00Z' }],
 						},
 					],
 				},
@@ -712,10 +688,7 @@ describe('Health Sync API', () => {
 				.bind(startTime)
 				.first<{ id: number }>();
 
-			const stages = await env.health_sync_db
-				.prepare('SELECT * FROM sleep_stages WHERE sleep_session_id = ?')
-				.bind(session!.id)
-				.all();
+			const stages = await env.health_sync_db.prepare('SELECT * FROM sleep_stages WHERE sleep_session_id = ?').bind(session!.id).all();
 			expect(stages.results.length).toBe(1);
 			expect(stages.results[0].stage).toBe('deep');
 		});
@@ -724,9 +697,7 @@ describe('Health Sync API', () => {
 			const response = await makeRequest('/sync', {
 				method: 'POST',
 				body: {
-					body_measurements: [
-						{ recorded_at: '2020-07-05T10:00:00Z', weight_kg: 70.5, body_fat_percent: 20 },
-					],
+					body_measurements: [{ recorded_at: '2020-07-05T10:00:00Z', weight_kg: 70.5, body_fat_percent: 20 }],
 				},
 				headers: createAuthHeaders(),
 			});
@@ -793,10 +764,7 @@ describe('Health Sync API', () => {
 			});
 			expect(response.status).toBe(201);
 
-			const result = await env.health_sync_db
-				.prepare('SELECT * FROM cpap_logs WHERE recorded_date = ?')
-				.bind(recordedDate)
-				.first();
+			const result = await env.health_sync_db.prepare('SELECT * FROM cpap_logs WHERE recorded_date = ?').bind(recordedDate).first();
 			expect(result).not.toBeNull();
 			expect(result!.ai_count).toBe(13);
 			expect(result!.hi_count).toBe(2);
@@ -838,10 +806,7 @@ describe('Health Sync API', () => {
 				headers: createAuthHeaders(),
 			});
 
-			const result = await env.health_sync_db
-				.prepare('SELECT * FROM cpap_logs WHERE recorded_date = ?')
-				.bind(recordedDate)
-				.first();
+			const result = await env.health_sync_db.prepare('SELECT * FROM cpap_logs WHERE recorded_date = ?').bind(recordedDate).first();
 			expect(result).not.toBeNull();
 			// notes should be preserved via COALESCE
 			expect(result!.notes).toBe('Mask adjusted');
@@ -875,14 +840,18 @@ describe('Health Sync API', () => {
 			expect(data.error).not.toMatch(/no such table/i);
 
 			// Recreate table for other tests
-			await env.health_sync_db.prepare(`
+			await env.health_sync_db
+				.prepare(
+					`
 				CREATE TABLE IF NOT EXISTS steps (
 					id INTEGER PRIMARY KEY AUTOINCREMENT,
 					date TEXT NOT NULL,
 					count INTEGER NOT NULL,
 					created_at TEXT DEFAULT CURRENT_TIMESTAMP
 				)
-			`).run();
+			`,
+				)
+				.run();
 			await env.health_sync_db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_steps_date ON steps(date)').run();
 		});
 
@@ -897,7 +866,9 @@ describe('Health Sync API', () => {
 			expect(data.error).toBe('Database operation failed');
 
 			// Recreate table for other tests
-			await env.health_sync_db.prepare(`
+			await env.health_sync_db
+				.prepare(
+					`
 				CREATE TABLE IF NOT EXISTS body_measurements (
 					id INTEGER PRIMARY KEY AUTOINCREMENT,
 					recorded_at TEXT NOT NULL,
@@ -905,8 +876,12 @@ describe('Health Sync API', () => {
 					body_fat_percent REAL,
 					created_at TEXT DEFAULT CURRENT_TIMESTAMP
 				)
-			`).run();
-			await env.health_sync_db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_body_measurements_recorded_at ON body_measurements(recorded_at)').run();
+			`,
+				)
+				.run();
+			await env.health_sync_db
+				.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_body_measurements_recorded_at ON body_measurements(recorded_at)')
+				.run();
 		});
 
 		it('returns partial success info when sync fails mid-batch', async () => {
@@ -917,9 +892,7 @@ describe('Health Sync API', () => {
 			const response = await makeRequest('/sync', {
 				method: 'POST',
 				body: {
-					body_measurements: [
-						{ recorded_at: '2020-09-01T10:00:00Z', weight_kg: 70.0 },
-					],
+					body_measurements: [{ recorded_at: '2020-09-01T10:00:00Z', weight_kg: 70.0 }],
 					steps: [{ date: '2020-09-01', count: 5000 }],
 				},
 				headers: createAuthHeaders(),
@@ -932,14 +905,18 @@ describe('Health Sync API', () => {
 			expect(data.inserted.body_measurements).toBe(1);
 
 			// Recreate table for other tests
-			await env.health_sync_db.prepare(`
+			await env.health_sync_db
+				.prepare(
+					`
 				CREATE TABLE IF NOT EXISTS steps (
 					id INTEGER PRIMARY KEY AUTOINCREMENT,
 					date TEXT NOT NULL,
 					count INTEGER NOT NULL,
 					created_at TEXT DEFAULT CURRENT_TIMESTAMP
 				)
-			`).run();
+			`,
+				)
+				.run();
 			await env.health_sync_db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_steps_date ON steps(date)').run();
 		});
 	});

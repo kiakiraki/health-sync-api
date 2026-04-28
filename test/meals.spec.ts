@@ -11,7 +11,7 @@ const API_KEY = 'dev-local-key';
 
 function createAuthHeaders() {
 	return {
-		'Authorization': `Bearer ${API_KEY}`,
+		Authorization: `Bearer ${API_KEY}`,
 		'Content-Type': 'application/json',
 	};
 }
@@ -22,7 +22,7 @@ async function makeRequest(
 		method?: string;
 		body?: unknown;
 		headers?: Record<string, string>;
-	} = {}
+	} = {},
 ) {
 	const { method = 'GET', body, headers = {} } = options;
 	const request = new IncomingRequest(`http://example.com${path}`, {
@@ -205,10 +205,7 @@ describe('Meals API', () => {
 			expect(response.status).toBe(201);
 
 			// Verify record was updated
-			const result = await env.health_sync_db
-				.prepare('SELECT * FROM meals WHERE date = ? AND meal_type = ?')
-				.bind(date, mealType)
-				.first();
+			const result = await env.health_sync_db.prepare('SELECT * FROM meals WHERE date = ? AND meal_type = ?').bind(date, mealType).first();
 			expect(result!.description).toBe('Pancakes');
 			expect(result!.calories_kcal).toBe(500);
 			expect(result!.protein_g).toBe(10);
@@ -272,11 +269,7 @@ describe('Meals API', () => {
 			});
 			expect(response.status).toBe(200);
 			const data = await response.json<AnyJson>();
-			expect(
-				data.meals.every(
-					(m: AnyJson) => m.date >= '2020-04-01' && m.date <= '2020-07-01'
-				)
-			).toBe(true);
+			expect(data.meals.every((m: AnyJson) => m.date >= '2020-04-01' && m.date <= '2020-07-01')).toBe(true);
 		});
 
 		it('returns meals sorted by date ASC and meal_type order', async () => {

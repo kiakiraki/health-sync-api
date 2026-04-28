@@ -6,7 +6,9 @@ const setupDatabase = async () => {
 	const db = env.health_sync_db;
 
 	// Create tables one by one using prepare().run()
-	await db.prepare(`
+	await db
+		.prepare(
+			`
 		CREATE TABLE IF NOT EXISTS body_measurements (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			recorded_at TEXT NOT NULL,
@@ -14,9 +16,13 @@ const setupDatabase = async () => {
 			body_fat_percent REAL,
 			created_at TEXT DEFAULT CURRENT_TIMESTAMP
 		)
-	`).run();
+	`,
+		)
+		.run();
 
-	await db.prepare(`
+	await db
+		.prepare(
+			`
 		CREATE TABLE IF NOT EXISTS blood_pressure (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			recorded_at TEXT NOT NULL,
@@ -25,9 +31,13 @@ const setupDatabase = async () => {
 			pulse INTEGER,
 			created_at TEXT DEFAULT CURRENT_TIMESTAMP
 		)
-	`).run();
+	`,
+		)
+		.run();
 
-	await db.prepare(`
+	await db
+		.prepare(
+			`
 		CREATE TABLE IF NOT EXISTS sleep_sessions (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			start_time TEXT NOT NULL,
@@ -35,18 +45,26 @@ const setupDatabase = async () => {
 			duration_hours REAL,
 			created_at TEXT DEFAULT CURRENT_TIMESTAMP
 		)
-	`).run();
+	`,
+		)
+		.run();
 
-	await db.prepare(`
+	await db
+		.prepare(
+			`
 		CREATE TABLE IF NOT EXISTS steps (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			date TEXT NOT NULL,
 			count INTEGER NOT NULL,
 			created_at TEXT DEFAULT CURRENT_TIMESTAMP
 		)
-	`).run();
+	`,
+		)
+		.run();
 
-	await db.prepare(`
+	await db
+		.prepare(
+			`
 		CREATE TABLE IF NOT EXISTS cpap_logs (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			recorded_date TEXT NOT NULL UNIQUE,
@@ -73,9 +91,13 @@ const setupDatabase = async () => {
 			tv_median REAL,
 			created_at TEXT DEFAULT (datetime('now'))
 		)
-	`).run();
+	`,
+		)
+		.run();
 
-	await db.prepare(`
+	await db
+		.prepare(
+			`
 		CREATE TABLE IF NOT EXISTS blood_tests (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			test_date TEXT NOT NULL UNIQUE,
@@ -93,7 +115,9 @@ const setupDatabase = async () => {
 			gtp REAL,
 			created_at TEXT DEFAULT (datetime('now'))
 		)
-	`).run();
+	`,
+		)
+		.run();
 
 	// Create unique indexes
 	await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_body_measurements_recorded_at ON body_measurements(recorded_at)`).run();
@@ -101,7 +125,9 @@ const setupDatabase = async () => {
 	await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_sleep_sessions_start_time ON sleep_sessions(start_time)`).run();
 	await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_steps_date ON steps(date)`).run();
 
-	await db.prepare(`
+	await db
+		.prepare(
+			`
 		CREATE TABLE IF NOT EXISTS sleep_stages (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			sleep_session_id INTEGER NOT NULL,
@@ -111,11 +137,15 @@ const setupDatabase = async () => {
 			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (sleep_session_id) REFERENCES sleep_sessions(id) ON DELETE CASCADE
 		)
-	`).run();
+	`,
+		)
+		.run();
 	await db.prepare(`CREATE INDEX IF NOT EXISTS idx_sleep_stages_session_id ON sleep_stages(sleep_session_id)`).run();
 	await db.prepare(`CREATE INDEX IF NOT EXISTS idx_blood_tests_date ON blood_tests(test_date)`).run();
 
-	await db.prepare(`
+	await db
+		.prepare(
+			`
 		CREATE TABLE IF NOT EXISTS meals (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			date TEXT NOT NULL,
@@ -131,7 +161,9 @@ const setupDatabase = async () => {
 			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(date, meal_type)
 		)
-	`).run();
+	`,
+		)
+		.run();
 
 	await db.prepare(`CREATE INDEX IF NOT EXISTS idx_meals_date ON meals(date)`).run();
 };

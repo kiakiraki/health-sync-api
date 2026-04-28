@@ -137,10 +137,7 @@ function daysAgoDate(days: number): string {
 	return date.toISOString().split('T')[0];
 }
 
-function parseDateRangeParams(
-	url: URL,
-	defaultDays?: number
-): { from?: string; to?: string; error?: Response } {
+function parseDateRangeParams(url: URL, defaultDays?: number): { from?: string; to?: string; error?: Response } {
 	const fromParam = url.searchParams.get('from');
 	const toParam = url.searchParams.get('to');
 	const daysParam = url.searchParams.get('days');
@@ -179,7 +176,7 @@ function parseDateRangeParams(
 function buildDateFilter(
 	column: string,
 	type: 'date' | 'datetime',
-	range: { from?: string; to?: string }
+	range: { from?: string; to?: string },
 ): { clause: string; params: string[] } {
 	const conditions: string[] = [];
 	const params: string[] = [];
@@ -245,7 +242,7 @@ async function handleSync(request: Request, env: Env): Promise<Response> {
 						`INSERT INTO body_measurements (recorded_at, weight_kg, body_fat_percent) VALUES (?, ?, ?)
 						 ON CONFLICT(recorded_at) DO UPDATE SET
 						 weight_kg = excluded.weight_kg,
-						 body_fat_percent = excluded.body_fat_percent`
+						 body_fat_percent = excluded.body_fat_percent`,
 					)
 					.bind(m.recorded_at, m.weight_kg ?? null, m.body_fat_percent ?? null)
 					.run();
@@ -262,7 +259,7 @@ async function handleSync(request: Request, env: Env): Promise<Response> {
 						 ON CONFLICT(recorded_at) DO UPDATE SET
 						 systolic = excluded.systolic,
 						 diastolic = excluded.diastolic,
-						 pulse = excluded.pulse`
+						 pulse = excluded.pulse`,
 					)
 					.bind(bp.recorded_at, bp.systolic, bp.diastolic, bp.pulse ?? null)
 					.run();
@@ -278,7 +275,7 @@ async function handleSync(request: Request, env: Env): Promise<Response> {
 						`INSERT INTO sleep_sessions (start_time, end_time, duration_hours) VALUES (?, ?, ?)
 						 ON CONFLICT(start_time) DO UPDATE SET
 						 end_time = excluded.end_time,
-						 duration_hours = excluded.duration_hours`
+						 duration_hours = excluded.duration_hours`,
 					)
 					.bind(s.start_time, s.end_time, s.duration_hours ?? null)
 					.run();
@@ -292,15 +289,11 @@ async function handleSync(request: Request, env: Env): Promise<Response> {
 					if (session) {
 						const merged = mergeConsecutiveStages(s.stages);
 						await env.health_sync_db.batch([
-							env.health_sync_db
-								.prepare('DELETE FROM sleep_stages WHERE sleep_session_id = ?')
-								.bind(session.id),
+							env.health_sync_db.prepare('DELETE FROM sleep_stages WHERE sleep_session_id = ?').bind(session.id),
 							...merged.map((stage) =>
 								env.health_sync_db
-									.prepare(
-										'INSERT INTO sleep_stages (sleep_session_id, stage, start_time, end_time) VALUES (?, ?, ?, ?)'
-									)
-									.bind(session.id, stage.stage, stage.start_time, stage.end_time)
+									.prepare('INSERT INTO sleep_stages (sleep_session_id, stage, start_time, end_time) VALUES (?, ?, ?, ?)')
+									.bind(session.id, stage.stage, stage.start_time, stage.end_time),
 							),
 						]);
 					}
@@ -317,7 +310,7 @@ async function handleSync(request: Request, env: Env): Promise<Response> {
 					.prepare(
 						`INSERT INTO steps (date, count) VALUES (?, ?)
 						 ON CONFLICT(date) DO UPDATE SET
-						 count = excluded.count`
+						 count = excluded.count`,
 					)
 					.bind(st.date, st.count)
 					.run();
@@ -378,7 +371,7 @@ async function handleCpap(request: Request, env: Env): Promise<Response> {
 				 br_mean = excluded.br_mean,
 				 br_median = excluded.br_median,
 				 tv_mean = excluded.tv_mean,
-				 tv_median = excluded.tv_median`
+				 tv_median = excluded.tv_median`,
 			)
 			.bind(
 				body.recorded_date,
@@ -402,7 +395,7 @@ async function handleCpap(request: Request, env: Env): Promise<Response> {
 				body.br_mean ?? null,
 				body.br_median ?? null,
 				body.tv_mean ?? null,
-				body.tv_median ?? null
+				body.tv_median ?? null,
 			)
 			.run();
 
@@ -439,7 +432,7 @@ async function handleBloodTest(request: Request, env: Env): Promise<Response> {
 				 egfr = excluded.egfr,
 				 ast = excluded.ast,
 				 alt = excluded.alt,
-				 gtp = excluded.gtp`
+				 gtp = excluded.gtp`,
 			)
 			.bind(
 				body.test_date,
@@ -454,7 +447,7 @@ async function handleBloodTest(request: Request, env: Env): Promise<Response> {
 				body.egfr ?? null,
 				body.ast ?? null,
 				body.alt ?? null,
-				body.gtp ?? null
+				body.gtp ?? null,
 			)
 			.run();
 
@@ -496,7 +489,7 @@ async function handlePostMeal(request: Request, env: Env): Promise<Response> {
 	if (!DATE_FORMAT.test(body.date)) {
 		return errorResponse('Invalid date format (must be YYYY-MM-DD)', 400);
 	}
-	if (!body.meal_type || !VALID_MEAL_TYPES.includes(body.meal_type as any)) {
+	if (!body.meal_type || !(VALID_MEAL_TYPES as readonly string[]).includes(body.meal_type)) {
 		return errorResponse('meal_type must be one of: breakfast, lunch, dinner, snack', 400);
 	}
 	if (!body.description || body.description.trim() === '') {
@@ -516,7 +509,7 @@ async function handlePostMeal(request: Request, env: Env): Promise<Response> {
 				 carbs_g = excluded.carbs_g,
 				 fiber_g = excluded.fiber_g,
 				 salt_g = excluded.salt_g,
-				 note = excluded.note`
+				 note = excluded.note`,
 			)
 			.bind(
 				body.date,
@@ -528,7 +521,7 @@ async function handlePostMeal(request: Request, env: Env): Promise<Response> {
 				body.carbs_g ?? null,
 				body.fiber_g ?? null,
 				body.salt_g ?? null,
-				body.note ?? null
+				body.note ?? null,
 			)
 			.run();
 
@@ -572,39 +565,35 @@ async function handleMetrics(request: Request, env: Env): Promise<Response> {
 		const cpFilter = buildDateFilter('recorded_date', 'date', range);
 		const btFilter = buildDateFilter('test_date', 'date', range);
 
-		const [bodyMeasurements, bloodPressure, sleepSessions, steps, cpapLogs, bloodTests] =
-			await Promise.all([
-				env.health_sync_db
-					.prepare(`SELECT * FROM body_measurements${bmFilter.clause} ORDER BY recorded_at DESC`)
-					.bind(...bmFilter.params)
-					.all(),
-				env.health_sync_db
-					.prepare(`SELECT * FROM blood_pressure${bpFilter.clause} ORDER BY recorded_at DESC`)
-					.bind(...bpFilter.params)
-					.all(),
-				env.health_sync_db
-					.prepare(`SELECT * FROM sleep_sessions${ssFilter.clause} ORDER BY start_time DESC`)
-					.bind(...ssFilter.params)
-					.all(),
-				env.health_sync_db
-					.prepare(`SELECT * FROM steps${stFilter.clause} ORDER BY date DESC`)
-					.bind(...stFilter.params)
-					.all(),
-				env.health_sync_db
-					.prepare(`SELECT * FROM cpap_logs${cpFilter.clause} ORDER BY recorded_date DESC`)
-					.bind(...cpFilter.params)
-					.all(),
-				env.health_sync_db
-					.prepare(`SELECT * FROM blood_tests${btFilter.clause} ORDER BY test_date DESC`)
-					.bind(...btFilter.params)
-					.all(),
-			]);
+		const [bodyMeasurements, bloodPressure, sleepSessions, steps, cpapLogs, bloodTests] = await Promise.all([
+			env.health_sync_db
+				.prepare(`SELECT * FROM body_measurements${bmFilter.clause} ORDER BY recorded_at DESC`)
+				.bind(...bmFilter.params)
+				.all(),
+			env.health_sync_db
+				.prepare(`SELECT * FROM blood_pressure${bpFilter.clause} ORDER BY recorded_at DESC`)
+				.bind(...bpFilter.params)
+				.all(),
+			env.health_sync_db
+				.prepare(`SELECT * FROM sleep_sessions${ssFilter.clause} ORDER BY start_time DESC`)
+				.bind(...ssFilter.params)
+				.all(),
+			env.health_sync_db
+				.prepare(`SELECT * FROM steps${stFilter.clause} ORDER BY date DESC`)
+				.bind(...stFilter.params)
+				.all(),
+			env.health_sync_db
+				.prepare(`SELECT * FROM cpap_logs${cpFilter.clause} ORDER BY recorded_date DESC`)
+				.bind(...cpFilter.params)
+				.all(),
+			env.health_sync_db
+				.prepare(`SELECT * FROM blood_tests${btFilter.clause} ORDER BY test_date DESC`)
+				.bind(...btFilter.params)
+				.all(),
+		]);
 
 		const sessionRows = sleepSessions.results as Record<string, unknown>[];
-		const stagesBySessionId = new Map<
-			number,
-			Array<{ stage: string; start_time: string; end_time: string }>
-		>();
+		const stagesBySessionId = new Map<number, Array<{ stage: string; start_time: string; end_time: string }>>();
 
 		if (sessionRows.length > 0) {
 			const sessionIds = sessionRows.map((s) => s.id as number);
@@ -614,7 +603,7 @@ async function handleMetrics(request: Request, env: Env): Promise<Response> {
 					`SELECT sleep_session_id, stage, start_time, end_time
 					 FROM sleep_stages
 					 WHERE sleep_session_id IN (${placeholders})
-					 ORDER BY start_time ASC`
+					 ORDER BY start_time ASC`,
 				)
 				.bind(...sessionIds)
 				.all<{
@@ -702,12 +691,8 @@ export default {
 			return errorResponse('Not found', 404);
 		} catch (error) {
 			console.error('Unhandled error:', error);
-			const isDbError = error instanceof Error &&
-				(error.message.includes('D1') || error.message.includes('SQLITE'));
-			return errorResponse(
-				isDbError ? 'Database operation failed' : 'Internal server error',
-				500
-			);
+			const isDbError = error instanceof Error && (error.message.includes('D1') || error.message.includes('SQLITE'));
+			return errorResponse(isDbError ? 'Database operation failed' : 'Internal server error', 500);
 		}
 	},
 } satisfies ExportedHandler<Env>;
