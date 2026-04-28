@@ -186,6 +186,15 @@ describe('Health Sync API', () => {
 			expect(response.status).toBe(400);
 		});
 
+		it('returns 400 for partially-numeric days like "7abc"', async () => {
+			const response = await makeRequest('/blood-test?days=7abc', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(400);
+			const data = await response.json<AnyJson>();
+			expect(data.error).toBe('Invalid days parameter (must be a positive integer)');
+		});
+
 		it('filters by from parameter', async () => {
 			await makeRequest('/blood-test', {
 				method: 'POST',
@@ -422,6 +431,34 @@ describe('Health Sync API', () => {
 				headers: createAuthHeaders(),
 			});
 			expect(response.status).toBe(200);
+		});
+
+		it('to= includes ISO datetime rows recorded on the to date (boundary)', async () => {
+			// Bug regression: ISO 'T' separator > space in ASCII collation, so
+			// `recorded_at <= 'YYYY-MM-DD 23:59:59'` used to drop same-day rows.
+			await makeRequest('/sync', {
+				method: 'POST',
+				body: {
+					body_measurements: [
+						{ recorded_at: '2020-10-15T23:30:00Z', weight_kg: 70.0 },
+						{ recorded_at: '2020-10-15T00:00:00Z', weight_kg: 70.5 },
+					],
+					blood_pressure: [{ recorded_at: '2020-10-15T22:00:00Z', systolic: 120, diastolic: 80 }],
+					sleep_sessions: [{ start_time: '2020-10-15T23:00:00Z', end_time: '2020-10-16T07:00:00Z', duration_hours: 8.0 }],
+				},
+				headers: createAuthHeaders(),
+			});
+
+			const response = await makeRequest('/metrics?from=2020-10-15&to=2020-10-15', {
+				headers: createAuthHeaders(),
+			});
+			expect(response.status).toBe(200);
+			const data = await response.json<AnyJson>();
+
+			const bm = data.body_measurements.filter((r: AnyJson) => r.recorded_at.startsWith('2020-10-15'));
+			expect(bm.length).toBe(2);
+			expect(data.blood_pressure.some((r: AnyJson) => r.recorded_at === '2020-10-15T22:00:00Z')).toBe(true);
+			expect(data.sleep_sessions.some((r: AnyJson) => r.start_time === '2020-10-15T23:00:00Z')).toBe(true);
 		});
 
 		it('returns 400 for invalid from format', async () => {
