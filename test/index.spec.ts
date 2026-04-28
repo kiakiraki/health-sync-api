@@ -884,9 +884,9 @@ describe('Health Sync API', () => {
 				.run();
 		});
 
-		it('returns partial success info when sync fails mid-batch', async () => {
-			// First, sync one valid step
-			// Then send a batch where second item causes an error
+		it('rolls back the entire sync atomically when one statement fails', async () => {
+			// db.batch wraps all phase-1 statements in an implicit transaction,
+			// so a failure on `steps` must also revert the body_measurements row.
 			await env.health_sync_db.prepare('DROP TABLE IF EXISTS steps').run();
 
 			const response = await makeRequest('/sync', {
@@ -900,9 +900,13 @@ describe('Health Sync API', () => {
 			expect(response.status).toBe(500);
 			const data = await response.json<AnyJson>();
 			expect(data.error).toBe('Database operation failed');
-			// Should include partial results so client knows what succeeded
-			expect(data.inserted).toBeDefined();
-			expect(data.inserted.body_measurements).toBe(1);
+
+			// Body measurement must NOT have been persisted (rolled back).
+			const persisted = await env.health_sync_db
+				.prepare('SELECT * FROM body_measurements WHERE recorded_at = ?')
+				.bind('2020-09-01T10:00:00Z')
+				.first();
+			expect(persisted).toBeNull();
 
 			// Recreate table for other tests
 			await env.health_sync_db

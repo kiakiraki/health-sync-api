@@ -215,10 +215,6 @@ async function handleHealth(): Promise<Response> {
 }
 
 async function handleSync(request: Request, env: Env): Promise<Response> {
-	if (request.method !== 'POST') {
-		return errorResponse('Method not allowed', 405);
-	}
-
 	let body: SyncRequest;
 	try {
 		body = await request.json();
@@ -226,105 +222,103 @@ async function handleSync(request: Request, env: Env): Promise<Response> {
 		return errorResponse('Invalid JSON body', 400);
 	}
 
-	const results = {
-		body_measurements: 0,
-		blood_pressure: 0,
-		sleep_sessions: 0,
-		steps: 0,
+	const counts = {
+		body_measurements: body.body_measurements?.length ?? 0,
+		blood_pressure: body.blood_pressure?.length ?? 0,
+		sleep_sessions: body.sleep_sessions?.length ?? 0,
+		steps: body.steps?.length ?? 0,
 	};
 
-	try {
-		// Insert body measurements
-		if (body.body_measurements && body.body_measurements.length > 0) {
+	return withDbErrorHandling(async () => {
+		const db = env.health_sync_db;
+
+		// Phase 1: upserts that don't depend on freshly-generated ids,
+		// plus sleep_sessions UPSERT with RETURNING id (avoids the
+		// previous SELECT-after-INSERT N+1).
+		const phase1: D1PreparedStatement[] = [];
+
+		if (body.body_measurements?.length) {
+			const stmt = db.prepare(
+				`INSERT INTO body_measurements (recorded_at, weight_kg, body_fat_percent) VALUES (?, ?, ?)
+				 ON CONFLICT(recorded_at) DO UPDATE SET
+				 weight_kg = excluded.weight_kg,
+				 body_fat_percent = excluded.body_fat_percent`,
+			);
 			for (const m of body.body_measurements) {
-				await env.health_sync_db
-					.prepare(
-						`INSERT INTO body_measurements (recorded_at, weight_kg, body_fat_percent) VALUES (?, ?, ?)
-						 ON CONFLICT(recorded_at) DO UPDATE SET
-						 weight_kg = excluded.weight_kg,
-						 body_fat_percent = excluded.body_fat_percent`,
-					)
-					.bind(m.recorded_at, m.weight_kg ?? null, m.body_fat_percent ?? null)
-					.run();
-				results.body_measurements++;
+				phase1.push(stmt.bind(m.recorded_at, m.weight_kg ?? null, m.body_fat_percent ?? null));
 			}
 		}
 
-		// Insert blood pressure
-		if (body.blood_pressure && body.blood_pressure.length > 0) {
+		if (body.blood_pressure?.length) {
+			const stmt = db.prepare(
+				`INSERT INTO blood_pressure (recorded_at, systolic, diastolic, pulse) VALUES (?, ?, ?, ?)
+				 ON CONFLICT(recorded_at) DO UPDATE SET
+				 systolic = excluded.systolic,
+				 diastolic = excluded.diastolic,
+				 pulse = excluded.pulse`,
+			);
 			for (const bp of body.blood_pressure) {
-				await env.health_sync_db
-					.prepare(
-						`INSERT INTO blood_pressure (recorded_at, systolic, diastolic, pulse) VALUES (?, ?, ?, ?)
-						 ON CONFLICT(recorded_at) DO UPDATE SET
-						 systolic = excluded.systolic,
-						 diastolic = excluded.diastolic,
-						 pulse = excluded.pulse`,
-					)
-					.bind(bp.recorded_at, bp.systolic, bp.diastolic, bp.pulse ?? null)
-					.run();
-				results.blood_pressure++;
+				phase1.push(stmt.bind(bp.recorded_at, bp.systolic, bp.diastolic, bp.pulse ?? null));
 			}
 		}
 
-		// Insert sleep sessions
-		if (body.sleep_sessions && body.sleep_sessions.length > 0) {
-			for (const s of body.sleep_sessions) {
-				await env.health_sync_db
-					.prepare(
-						`INSERT INTO sleep_sessions (start_time, end_time, duration_hours) VALUES (?, ?, ?)
-						 ON CONFLICT(start_time) DO UPDATE SET
-						 end_time = excluded.end_time,
-						 duration_hours = excluded.duration_hours`,
-					)
-					.bind(s.start_time, s.end_time, s.duration_hours ?? null)
-					.run();
-
-				if (s.stages && s.stages.length > 0) {
-					const session = await env.health_sync_db
-						.prepare('SELECT id FROM sleep_sessions WHERE start_time = ?')
-						.bind(s.start_time)
-						.first<{ id: number }>();
-
-					if (session) {
-						const merged = mergeConsecutiveStages(s.stages);
-						await env.health_sync_db.batch([
-							env.health_sync_db.prepare('DELETE FROM sleep_stages WHERE sleep_session_id = ?').bind(session.id),
-							...merged.map((stage) =>
-								env.health_sync_db
-									.prepare('INSERT INTO sleep_stages (sleep_session_id, stage, start_time, end_time) VALUES (?, ?, ?, ?)')
-									.bind(session.id, stage.stage, stage.start_time, stage.end_time),
-							),
-						]);
-					}
-				}
-
-				results.sleep_sessions++;
-			}
-		}
-
-		// Insert steps
-		if (body.steps && body.steps.length > 0) {
+		if (body.steps?.length) {
+			const stmt = db.prepare(
+				`INSERT INTO steps (date, count) VALUES (?, ?)
+				 ON CONFLICT(date) DO UPDATE SET count = excluded.count`,
+			);
 			for (const st of body.steps) {
-				await env.health_sync_db
-					.prepare(
-						`INSERT INTO steps (date, count) VALUES (?, ?)
-						 ON CONFLICT(date) DO UPDATE SET
-						 count = excluded.count`,
-					)
-					.bind(st.date, st.count)
-					.run();
-				results.steps++;
+				phase1.push(stmt.bind(st.date, st.count));
 			}
 		}
-	} catch (error) {
-		console.error('Sync DB error:', error);
-		return errorResponse('Database operation failed', 500, { inserted: results });
-	}
 
-	return jsonResponse({
-		success: true,
-		inserted: results,
+		const sleepSessionStartIndex = phase1.length;
+		if (body.sleep_sessions?.length) {
+			const stmt = db.prepare(
+				`INSERT INTO sleep_sessions (start_time, end_time, duration_hours) VALUES (?, ?, ?)
+				 ON CONFLICT(start_time) DO UPDATE SET
+				 end_time = excluded.end_time,
+				 duration_hours = excluded.duration_hours
+				 RETURNING id`,
+			);
+			for (const s of body.sleep_sessions) {
+				phase1.push(stmt.bind(s.start_time, s.end_time, s.duration_hours ?? null));
+			}
+		}
+
+		// d1.batch wraps all statements in a single implicit transaction:
+		// any failure rolls back the whole sync.
+		const phase1Results = phase1.length > 0 ? await db.batch<{ id: number }>(phase1) : [];
+
+		// Phase 2: replace sleep_stages for sessions that included a stages[] field.
+		// Skipped when the client omits stages[] (preserves existing rows on upsert).
+		if (body.sleep_sessions?.length) {
+			const stageStmts: D1PreparedStatement[] = [];
+			const deleteStmt = db.prepare('DELETE FROM sleep_stages WHERE sleep_session_id = ?');
+			const insertStmt = db.prepare('INSERT INTO sleep_stages (sleep_session_id, stage, start_time, end_time) VALUES (?, ?, ?, ?)');
+
+			for (let i = 0; i < body.sleep_sessions.length; i++) {
+				const session = body.sleep_sessions[i];
+				if (!session.stages || session.stages.length === 0) continue;
+				const idResult = phase1Results[sleepSessionStartIndex + i];
+				const sessionId = idResult?.results?.[0]?.id;
+				if (sessionId === undefined) continue;
+
+				const merged = mergeConsecutiveStages(session.stages);
+				stageStmts.push(deleteStmt.bind(sessionId));
+				for (const stage of merged) {
+					stageStmts.push(insertStmt.bind(sessionId, stage.stage, stage.start_time, stage.end_time));
+				}
+			}
+			if (stageStmts.length > 0) {
+				await db.batch(stageStmts);
+			}
+		}
+
+		return jsonResponse({
+			success: true,
+			inserted: counts,
+		});
 	});
 }
 
