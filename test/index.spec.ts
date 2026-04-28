@@ -433,18 +433,28 @@ describe('Health Sync API', () => {
 			expect(response.status).toBe(200);
 		});
 
-		it('to= includes ISO datetime rows recorded on the to date (boundary)', async () => {
-			// Bug regression: ISO 'T' separator > space in ASCII collation, so
-			// `recorded_at <= 'YYYY-MM-DD 23:59:59'` used to drop same-day rows.
+		it('from/to are interpreted in JST and admit UTC-stored rows on that JST day', async () => {
+			// Server treats ?from / ?to as JST wall-clock days. The Android client
+			// stores `recorded_at` as UTC (Instant.toString → ISO_INSTANT), so a
+			// JST 10/15 wall-clock day spans UTC '2020-10-14T15:00:00Z' (inclusive)
+			// to UTC '2020-10-15T15:00:00Z' (exclusive).
 			await makeRequest('/sync', {
 				method: 'POST',
 				body: {
 					body_measurements: [
-						{ recorded_at: '2020-10-15T23:30:00Z', weight_kg: 70.0 },
-						{ recorded_at: '2020-10-15T00:00:00Z', weight_kg: 70.5 },
+						{ recorded_at: '2020-10-14T15:00:00Z', weight_kg: 70.0 }, // JST 10/15 00:00 — in
+						{ recorded_at: '2020-10-15T03:00:00Z', weight_kg: 70.5 }, // JST 10/15 12:00 — in
+						{ recorded_at: '2020-10-15T14:59:59Z', weight_kg: 70.6 }, // JST 10/15 23:59:59 — in (boundary)
+						{ recorded_at: '2020-10-15T15:00:00Z', weight_kg: 70.7 }, // JST 10/16 00:00 — out
+						{ recorded_at: '2020-10-14T14:59:59Z', weight_kg: 69.9 }, // JST 10/14 23:59:59 — out
 					],
-					blood_pressure: [{ recorded_at: '2020-10-15T22:00:00Z', systolic: 120, diastolic: 80 }],
-					sleep_sessions: [{ start_time: '2020-10-15T23:00:00Z', end_time: '2020-10-16T07:00:00Z', duration_hours: 8.0 }],
+					blood_pressure: [
+						{ recorded_at: '2020-10-14T22:00:00Z', systolic: 120, diastolic: 80 }, // JST 10/15 07:00 — in
+					],
+					sleep_sessions: [
+						{ start_time: '2020-10-14T14:00:00Z', end_time: '2020-10-14T22:00:00Z', duration_hours: 8.0 }, // JST 10/14 23:00 → out
+						{ start_time: '2020-10-14T23:00:00Z', end_time: '2020-10-15T07:00:00Z', duration_hours: 8.0 }, // JST 10/15 08:00 → in
+					],
 				},
 				headers: createAuthHeaders(),
 			});
@@ -455,10 +465,11 @@ describe('Health Sync API', () => {
 			expect(response.status).toBe(200);
 			const data = await response.json<AnyJson>();
 
-			const bm = data.body_measurements.filter((r: AnyJson) => r.recorded_at.startsWith('2020-10-15'));
-			expect(bm.length).toBe(2);
-			expect(data.blood_pressure.some((r: AnyJson) => r.recorded_at === '2020-10-15T22:00:00Z')).toBe(true);
-			expect(data.sleep_sessions.some((r: AnyJson) => r.start_time === '2020-10-15T23:00:00Z')).toBe(true);
+			const bmKept = data.body_measurements.map((r: AnyJson) => r.recorded_at).sort();
+			expect(bmKept).toEqual(['2020-10-14T15:00:00Z', '2020-10-15T03:00:00Z', '2020-10-15T14:59:59Z']);
+			expect(data.blood_pressure.some((r: AnyJson) => r.recorded_at === '2020-10-14T22:00:00Z')).toBe(true);
+			expect(data.sleep_sessions.some((r: AnyJson) => r.start_time === '2020-10-14T23:00:00Z')).toBe(true);
+			expect(data.sleep_sessions.some((r: AnyJson) => r.start_time === '2020-10-14T14:00:00Z')).toBe(false);
 		});
 
 		it('returns 400 for invalid from format', async () => {

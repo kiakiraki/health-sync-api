@@ -75,17 +75,21 @@ A top-level `try/catch` in `fetch` distinguishes D1/SQLITE-flavored errors from 
 
 ### Date filter helpers
 
+**The server is anchored to `Asia/Tokyo` (`APP_TZ` in `src/index.ts`).** All `?days=N` / `?from` / `?to` parameters and `date`-typed columns are interpreted as JST wall-clock days. The Android client (`../health-sync-app`) records `steps.date` via `LocalDate.ofInstant(_, ZoneId.systemDefault())`, so JST anchoring on the server keeps writer and reader in sync without per-request TZ negotiation. There is no DST in `Asia/Tokyo`, so a literal `+09:00` offset is used in the conversion helpers.
+
 All list endpoints accept the same query-param shape, parsed by `parseDateRangeParams(url, defaultDays?)`:
 
-- `?days=N` — last N days (positive integer).
-- `?from=YYYY-MM-DD` and/or `?to=YYYY-MM-DD` — inclusive range. `from`/`to` win over `days` when both are supplied.
+- `?days=N` — last N days, ending at _JST_ today (positive integer).
+- `?from=YYYY-MM-DD` and/or `?to=YYYY-MM-DD` — JST wall-clock days. `from`/`to` win over `days` when both are supplied.
 - No params → fall back to `defaultDays` (7 for `/metrics` and `/meals`; none for `/blood-test`).
 
-`buildDateFilter(column, type, range)` then constructs the `WHERE` fragment. The `type` arg matters: `'datetime'` columns get padded to `… 00:00:00` / `… 23:59:59`, `'date'` columns are compared as-is. Columns and their types:
+`daysAgoDate(days, now?)` and `todayInAppTZ(now?)` are exported with an optional `now` argument so they can be unit-tested without `vi.setSystemTime` — Cloudflare's vitest pool runs Worker code in an isolate where the timer mock doesn't reach `new Date()` inside the handler. `test/timezone.spec.ts` covers the JST anchoring; the rest of the assertions still go through the fetch handler.
 
-- `recorded_at` (body_measurements, blood_pressure) → datetime
+`buildDateFilter(column, type, range)` constructs the `WHERE` fragment. For `'datetime'` columns the bounds are converted from JST wall-clock days to UTC ISO strings (`YYYY-MM-DDT...+09:00 → ...Z`), and the upper bound is **half-open** (`< start of (to+1) JST day in UTC`) — an inclusive `<= '...23:59:59.999Z'` would silently drop stored `'...59Z'` values because `Z` > `.` in ASCII order. `'date'` columns are compared as JST-day strings directly. Columns and their types:
+
+- `recorded_at` (body_measurements, blood_pressure) → datetime (UTC `Z` stored, JST window applied)
 - `start_time` (sleep_sessions) → datetime
-- `date` (steps, meals) → date
+- `date` (steps, meals) → date (JST day string)
 - `recorded_date` (cpap_logs) → date
 - `test_date` (blood_tests) → date
 
