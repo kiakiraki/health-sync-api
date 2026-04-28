@@ -24,9 +24,9 @@ jobs:
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v8
         with:
-          commit-message: "chore: update compatibility_date"
+          commit-message: 'chore: update compatibility_date'
           branch: chore/update-compat-date
-          title: "chore: update Cloudflare compatibility_date"
+          title: 'chore: update Cloudflare compatibility_date'
           body: |
             `wrangler.jsonc` の `compatibility_date` を自動更新しました。
 

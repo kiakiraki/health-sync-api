@@ -26,13 +26,20 @@ npm run deploy
 
 # Regenerate worker-configuration.d.ts from wrangler.jsonc
 npm run cf-typegen
+
+# Lint / format / typecheck
+npm run lint           # ESLint v10 (flat config: eslint.config.mjs)
+npm run lint:fix       # auto-fix where possible
+npm run format         # Prettier --write
+npm run format:check   # Prettier --check (used in CI)
+npm run typecheck      # tsc --noEmit -p test/tsconfig.json
 ```
 
-There is no dedicated `lint` or `typecheck` script. TypeScript is checked implicitly via vitest/wrangler; formatting is Prettier (`.prettierrc`: tabs, single quotes, semi, `printWidth: 140`).
+Lint stack: ESLint v10 + `typescript-eslint` (recommended ruleset) with `eslint-config-prettier` to disable stylistic rules. Prettier config is in `.prettierrc` (tabs, single quotes, semi, `printWidth: 140`); ignores in `.prettierignore`. CI runs `format:check`, `lint`, `typecheck`, and tests on every PR.
 
 ## Database Migrations
 
-D1 migrations live in `migrations/` (numbered `0001_…` onwards). `schema.sql` is the *initial* schema reference but is **not** the source of truth for production — applied migrations are.
+D1 migrations live in `migrations/` (numbered `0001_…` onwards). `schema.sql` is the _initial_ schema reference but is **not** the source of truth for production — applied migrations are.
 
 ```bash
 # Create a new migration
@@ -75,6 +82,7 @@ All list endpoints accept the same query-param shape, parsed by `parseDateRangeP
 - No params → fall back to `defaultDays` (7 for `/metrics` and `/meals`; none for `/blood-test`).
 
 `buildDateFilter(column, type, range)` then constructs the `WHERE` fragment. The `type` arg matters: `'datetime'` columns get padded to `… 00:00:00` / `… 23:59:59`, `'date'` columns are compared as-is. Columns and their types:
+
 - `recorded_at` (body_measurements, blood_pressure) → datetime
 - `start_time` (sleep_sessions) → datetime
 - `date` (steps, meals) → date
@@ -84,6 +92,7 @@ All list endpoints accept the same query-param shape, parsed by `parseDateRangeP
 ### Data Model
 
 D1 tables (see `schema.sql` + `migrations/`):
+
 - `body_measurements`, `blood_pressure`, `sleep_sessions`, `steps` — the four "sync" tables, each with a unique index on its time column to enable upserts (added in `0002`).
 - `sleep_stages` — Health Connect-style stage segments, FK to `sleep_sessions(id)` with `ON DELETE CASCADE` (`0006`).
 - `cpap_logs` — CPAP therapy data; original columns in `0001`, expanded in `0004` with pressure / breathing rate / tidal volume statistics and event counts.
@@ -93,6 +102,7 @@ D1 tables (see `schema.sql` + `migrations/`):
 ### Environment Bindings
 
 Defined in `wrangler.jsonc`:
+
 - `health_sync_db` — D1 binding (database name `health-sync-db`).
 - `API_KEY` — secret, set via `wrangler secret put API_KEY` (locally injected by `vitest.config.mts`).
 

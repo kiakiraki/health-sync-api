@@ -16,16 +16,6 @@ const rows = lines.slice(1);
 
 console.log(`Read ${rows.length} data rows from CSV`);
 
-// CSV column → DB column mapping
-const csvToDb: Record<string, string> = {
-	date: 'recorded_date',
-	leak_avg_lpm: 'leak',
-};
-
-function dbCol(csvCol: string): string {
-	return csvToDb[csvCol] ?? csvCol;
-}
-
 function escapeSQL(value: string): string {
 	return value.replace(/'/g, "''");
 }
@@ -41,38 +31,54 @@ function buildInsert(row: string[]): string {
 	const aiCount = parseInt(record['ai_count'], 10);
 
 	// Calculate AI index: ai_count / usage_hours
-	const ai = usageHours > 0 ? (aiCount / usageHours) : null;
+	const ai = usageHours > 0 ? aiCount / usageHours : null;
 
 	const dbColumns = [
-		'recorded_date', 'ahi', 'ai', 'leak', 'usage_hours',
-		'ai_count', 'hi_count', 'csa_count', 'snore_count',
-		'ai_total_duration_sec', 'hi_total_duration_sec',
-		'pressure_min', 'pressure_max', 'pressure_mean', 'pressure_median', 'pressure_p90', 'pressure_p95',
-		'br_mean', 'br_median', 'tv_mean', 'tv_median',
+		'recorded_date',
+		'ahi',
+		'ai',
+		'leak',
+		'usage_hours',
+		'ai_count',
+		'hi_count',
+		'csa_count',
+		'snore_count',
+		'ai_total_duration_sec',
+		'hi_total_duration_sec',
+		'pressure_min',
+		'pressure_max',
+		'pressure_mean',
+		'pressure_median',
+		'pressure_p90',
+		'pressure_p95',
+		'br_mean',
+		'br_median',
+		'tv_mean',
+		'tv_median',
 	];
 
 	const values: string[] = [
-		`'${escapeSQL(recordedDate)}'`,                     // recorded_date
-		formatNum(record['ahi']),                            // ahi
-		ai !== null ? ai.toFixed(4) : 'NULL',               // ai (calculated)
-		formatNum(record['leak_avg_lpm']),                   // leak
-		formatNum(record['usage_hours']),                    // usage_hours
-		formatInt(record['ai_count']),                       // ai_count
-		formatInt(record['hi_count']),                       // hi_count
-		formatInt(record['csa_count']),                      // csa_count
-		formatInt(record['snore_count']),                    // snore_count
-		formatNum(record['ai_total_duration_sec']),          // ai_total_duration_sec
-		formatNum(record['hi_total_duration_sec']),          // hi_total_duration_sec
-		formatNum(record['pressure_min']),                   // pressure_min
-		formatNum(record['pressure_max']),                   // pressure_max
-		formatNum(record['pressure_mean']),                  // pressure_mean
-		formatNum(record['pressure_median']),                // pressure_median
-		formatNum(record['pressure_p90']),                   // pressure_p90
-		formatNum(record['pressure_p95']),                   // pressure_p95
-		formatNum(record['br_mean']),                        // br_mean
-		formatNum(record['br_median']),                      // br_median
-		formatNum(record['tv_mean']),                        // tv_mean
-		formatNum(record['tv_median']),                      // tv_median
+		`'${escapeSQL(recordedDate)}'`, // recorded_date
+		formatNum(record['ahi']), // ahi
+		ai !== null ? ai.toFixed(4) : 'NULL', // ai (calculated)
+		formatNum(record['leak_avg_lpm']), // leak
+		formatNum(record['usage_hours']), // usage_hours
+		formatInt(record['ai_count']), // ai_count
+		formatInt(record['hi_count']), // hi_count
+		formatInt(record['csa_count']), // csa_count
+		formatInt(record['snore_count']), // snore_count
+		formatNum(record['ai_total_duration_sec']), // ai_total_duration_sec
+		formatNum(record['hi_total_duration_sec']), // hi_total_duration_sec
+		formatNum(record['pressure_min']), // pressure_min
+		formatNum(record['pressure_max']), // pressure_max
+		formatNum(record['pressure_mean']), // pressure_mean
+		formatNum(record['pressure_median']), // pressure_median
+		formatNum(record['pressure_p90']), // pressure_p90
+		formatNum(record['pressure_p95']), // pressure_p95
+		formatNum(record['br_mean']), // br_mean
+		formatNum(record['br_median']), // br_median
+		formatNum(record['tv_mean']), // tv_mean
+		formatNum(record['tv_median']), // tv_median
 	];
 
 	return `INSERT INTO cpap_logs (${dbColumns.join(', ')})

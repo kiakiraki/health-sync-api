@@ -1,0 +1,8 @@
+node_modules
+.wrangler
+.claude
+dist
+coverage
+package-lock.json
+scripts/output
+worker-configuration.d.ts
