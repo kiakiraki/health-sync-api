@@ -52,7 +52,7 @@ npx wrangler d1 migrations apply health-sync-db --local
 npx wrangler d1 migrations apply health-sync-db --remote
 ```
 
-**Important — tests do NOT run migrations.** `test/setup.ts` re-creates the schema by hand using inline `CREATE TABLE` / `CREATE INDEX` statements. Whenever you add a migration that changes the schema (new table, new column, new unique index), you must mirror the change in `test/setup.ts` or tests will fail with "no such column / table".
+**Tests replay `schema.sql` + `migrations/*.sql`.** `test/setup.ts` imports each SQL file via Vite `?raw` and runs them through `db.exec()` in order. The `?raw` ambient module is declared in `test/env.d.ts`. When you add a new migration, also add a matching `import` line in `test/setup.ts` so it gets replayed; otherwise tests will fail with "no such column / table". (D1's `exec()` requires statement-per-line with no comments, so the helper in `test/setup.ts` strips `--` comments and collapses each statement to a single line before handing it over.)
 
 ## Architecture
 
