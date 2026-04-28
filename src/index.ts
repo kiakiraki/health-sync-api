@@ -131,10 +131,25 @@ async function withDbErrorHandling(handler: () => Promise<Response>): Promise<Re
 
 const DATE_FORMAT = /^\d{4}-\d{2}-\d{2}$/;
 
-function daysAgoDate(days: number): string {
-	const date = new Date();
-	date.setUTCDate(date.getUTCDate() - days);
-	return date.toISOString().split('T')[0];
+// The whole API treats "today" and date-typed columns in this timezone.
+// Health Connect data flows in via the Android client, which records
+// `steps.date` etc. as JST LocalDate, so the server side has to anchor
+// on the same wall clock to keep windows consistent.
+const APP_TZ = 'Asia/Tokyo';
+
+// JST today's YYYY-MM-DD. en-CA formats LocalDate as ISO already.
+// Exported with an optional `now` for unit testing — Cloudflare's vitest pool
+// runs Worker code in an isolate where vi.setSystemTime doesn't reach.
+export function todayInAppTZ(now: Date = new Date()): string {
+	return new Intl.DateTimeFormat('en-CA', { timeZone: APP_TZ }).format(now);
+}
+
+export function daysAgoDate(days: number, now: Date = new Date()): string {
+	// Anchor arithmetic on the JST date as a UTC midnight pseudo-Date,
+	// so day-shifting via setUTCDate isn't perturbed by the runtime's TZ.
+	const today = new Date(`${todayInAppTZ(now)}T00:00:00Z`);
+	today.setUTCDate(today.getUTCDate() - days);
+	return today.toISOString().split('T')[0];
 }
 
 function parseDateRangeParams(url: URL, defaultDays?: number): { from?: string; to?: string; error?: Response } {
@@ -177,6 +192,20 @@ function parseDateRangeParams(url: URL, defaultDays?: number): { from?: string; 
 	return {};
 }
 
+// JST 00:00:00 of `date` expressed as a UTC ISO Z string.
+// Asia/Tokyo has no DST and a fixed +09:00 offset, so the literal offset is safe.
+function jstDayStartUtc(date: string): string {
+	return new Date(`${date}T00:00:00+09:00`).toISOString();
+}
+
+// JST 00:00:00 of (date + 1 day) expressed as a UTC ISO Z string.
+// Used as a half-open upper bound to avoid ASCII-ordering hazards (see below).
+function nextJstDayStartUtc(date: string): string {
+	const d = new Date(`${date}T00:00:00Z`);
+	d.setUTCDate(d.getUTCDate() + 1);
+	return jstDayStartUtc(d.toISOString().split('T')[0]);
+}
+
 function buildDateFilter(
 	column: string,
 	type: 'date' | 'datetime',
@@ -187,19 +216,25 @@ function buildDateFilter(
 
 	if (range.from) {
 		conditions.push(`${column} >= ?`);
-		// datetime columns are stored as ISO 8601 ('YYYY-MM-DDTHH:MM:SSZ').
-		// Use the same separator and Z suffix so ASCII string comparison stays correct
-		// (T > space, so a 'YYYY-MM-DD 00:00:00' lower bound also works for >=, but
-		// matching the stored shape avoids surprises).
-		params.push(type === 'datetime' ? `${range.from}T00:00:00Z` : range.from);
+		// datetime columns hold UTC ISO 8601 ('...Z') because the Android client
+		// formats Instants via DateTimeFormatter.ISO_INSTANT. Treat ?from=YYYY-MM-DD
+		// as JST 00:00:00 on that wall-clock day, converted to UTC for comparison.
+		params.push(type === 'datetime' ? jstDayStartUtc(range.from) : range.from);
 	}
 
 	if (range.to) {
-		conditions.push(`${column} <= ?`);
-		// For datetime: 'YYYY-MM-DDT23:59:59.999Z' — strictly greater than any
-		// 'YYYY-MM-DDTHH:MM:SSZ' on the same day in ASCII order. Using a space
-		// separator here would silently drop same-day rows because 'T' > ' '.
-		params.push(type === 'datetime' ? `${range.to}T23:59:59.999Z` : range.to);
+		if (type === 'datetime') {
+			// Half-open upper bound: `< start of (to+1) JST day in UTC`.
+			// A naive inclusive `<= '...T23:59:59.999Z'` would silently drop
+			// stored values like '...T59Z' (no ms suffix, common from
+			// ISO_INSTANT) because 'Z' > '.' in ASCII order makes
+			// '...59Z' > '...59.999Z'. Half-open avoids the trap entirely.
+			conditions.push(`${column} < ?`);
+			params.push(nextJstDayStartUtc(range.to));
+		} else {
+			conditions.push(`${column} <= ?`);
+			params.push(range.to);
+		}
 	}
 
 	const clause = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
