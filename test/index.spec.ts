@@ -1,40 +1,9 @@
-import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { env } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
-import worker from '../src/index';
-
-const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
+import { createAuthHeaders, makeRequest } from './helpers';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyJson = Record<string, any>;
-
-const API_KEY = 'dev-local-key';
-
-function createAuthHeaders() {
-	return {
-		Authorization: `Bearer ${API_KEY}`,
-		'Content-Type': 'application/json',
-	};
-}
-
-async function makeRequest(
-	path: string,
-	options: {
-		method?: string;
-		body?: unknown;
-		headers?: Record<string, string>;
-	} = {},
-) {
-	const { method = 'GET', body, headers = {} } = options;
-	const request = new IncomingRequest(`http://example.com${path}`, {
-		method,
-		headers,
-		body: body ? JSON.stringify(body) : undefined,
-	});
-	const ctx = createExecutionContext();
-	const response = await worker.fetch(request, env);
-	await waitOnExecutionContext(ctx);
-	return response;
-}
 
 describe('Health Sync API', () => {
 	describe('GET /health', () => {
@@ -58,14 +27,11 @@ describe('Health Sync API', () => {
 		});
 
 		it('returns 400 for invalid JSON', async () => {
-			const request = new IncomingRequest('http://example.com/blood-test', {
+			const response = await makeRequest('/blood-test', {
 				method: 'POST',
 				headers: createAuthHeaders(),
-				body: 'invalid json',
+				rawBody: 'invalid json',
 			});
-			const ctx = createExecutionContext();
-			const response = await worker.fetch(request, env);
-			await waitOnExecutionContext(ctx);
 			expect(response.status).toBe(400);
 			const data = await response.json<AnyJson>();
 			expect(data.error).toBe('Invalid JSON body');

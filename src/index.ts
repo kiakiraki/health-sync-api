@@ -636,59 +636,34 @@ async function handleMetrics(request: Request, env: Env): Promise<Response> {
 	});
 }
 
+type RouteHandler = (request: Request, env: Env) => Promise<Response>;
+type Route = { method: string; path: string; auth: boolean; handler: RouteHandler };
+
+const routes: Route[] = [
+	{ method: 'GET', path: '/health', auth: false, handler: handleHealth },
+	{ method: 'POST', path: '/sync', auth: true, handler: handleSync },
+	{ method: 'GET', path: '/metrics', auth: true, handler: handleMetrics },
+	{ method: 'POST', path: '/cpap', auth: true, handler: handleCpap },
+	{ method: 'POST', path: '/blood-test', auth: true, handler: handleBloodTest },
+	{ method: 'GET', path: '/blood-test', auth: true, handler: handleGetBloodTest },
+	{ method: 'POST', path: '/meals', auth: true, handler: handlePostMeal },
+	{ method: 'GET', path: '/meals', auth: true, handler: handleGetMeals },
+];
+
 export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
 		const url = new URL(request.url);
 		const path = url.pathname;
 
 		try {
-			if (path === '/health' && request.method === 'GET') {
-				return handleHealth();
-			}
+			const route = routes.find((r) => r.path === path && r.method === request.method);
+			if (!route) return errorResponse('Not found', 404);
 
-			if (path === '/sync' && request.method === 'POST') {
+			if (route.auth) {
 				const authError = authenticate(request, env);
 				if (authError) return authError;
-				return handleSync(request, env);
 			}
-
-			if (path === '/metrics' && request.method === 'GET') {
-				const authError = authenticate(request, env);
-				if (authError) return authError;
-				return handleMetrics(request, env);
-			}
-
-			if (path === '/cpap' && request.method === 'POST') {
-				const authError = authenticate(request, env);
-				if (authError) return authError;
-				return handleCpap(request, env);
-			}
-
-			if (path === '/blood-test' && request.method === 'POST') {
-				const authError = authenticate(request, env);
-				if (authError) return authError;
-				return handleBloodTest(request, env);
-			}
-
-			if (path === '/blood-test' && request.method === 'GET') {
-				const authError = authenticate(request, env);
-				if (authError) return authError;
-				return handleGetBloodTest(request, env);
-			}
-
-			if (path === '/meals' && request.method === 'POST') {
-				const authError = authenticate(request, env);
-				if (authError) return authError;
-				return handlePostMeal(request, env);
-			}
-
-			if (path === '/meals' && request.method === 'GET') {
-				const authError = authenticate(request, env);
-				if (authError) return authError;
-				return handleGetMeals(request, env);
-			}
-
-			return errorResponse('Not found', 404);
+			return route.handler(request, env);
 		} catch (error) {
 			console.error('Unhandled error:', error);
 			const isDbError = error instanceof Error && (error.message.includes('D1') || error.message.includes('SQLITE'));
