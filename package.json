@@ -15,7 +15,7 @@
 		"typecheck": "tsc --noEmit -p test/tsconfig.json"
 	},
 	"devDependencies": {
-		"@cloudflare/vitest-pool-workers": "^0.16.18",
+		"@cloudflare/vitest-pool-workers": "^0.16.20",
 		"@eslint/js": "10.0.1",
 		"eslint": "10.2.1",
 		"eslint-config-prettier": "10.1.8",
