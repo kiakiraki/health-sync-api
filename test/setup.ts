@@ -1,17 +1,21 @@
 import { env } from 'cloudflare:test';
 import schema from '../schema.sql?raw';
-import migration0001 from '../migrations/0001_add_cpap_logs.sql?raw';
-import migration0002 from '../migrations/0002_add_unique_constraints.sql?raw';
-import migration0003 from '../migrations/0003_add_blood_tests.sql?raw';
-import migration0004 from '../migrations/0004_expand_cpap_logs.sql?raw';
-import migration0005 from '../migrations/0005_add_meals.sql?raw';
-import migration0006 from '../migrations/0006_add_sleep_stages.sql?raw';
 
 // Replays schema.sql + migrations/*.sql against the test DB so that the
 // test schema mirrors what `wrangler d1 migrations apply` would produce.
-// Previously these tables were re-declared by hand inside this file, which
-// silently drifted whenever a new migration was added.
-const migrations = [schema, migration0001, migration0002, migration0003, migration0004, migration0005, migration0006];
+// Migrations are auto-discovered via import.meta.glob and sorted by their
+// numeric filename prefix, so adding a migration file is enough — no manual
+// import line to forget here.
+const migrationModules = import.meta.glob('../migrations/*.sql', { query: '?raw', import: 'default', eager: true }) as Record<
+	string,
+	string
+>;
+const migrations = [
+	schema,
+	...Object.keys(migrationModules)
+		.sort()
+		.map((path) => migrationModules[path]),
+];
 
 const setupDatabase = async () => {
 	const db = env.health_sync_db;
