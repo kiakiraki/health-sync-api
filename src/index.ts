@@ -131,6 +131,96 @@ async function withDbErrorHandling(handler: () => Promise<Response>): Promise<Re
 
 const DATE_FORMAT = /^\d{4}-\d{2}-\d{2}$/;
 
+// --- request body validation helpers -------------------------------------
+// SQLite (D1) has no strict column typing, so without these checks a payload
+// with e.g. a string in a numeric field would be stored as-is, and a missing
+// NOT NULL field would surface as a 500 instead of a 400.
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+	return typeof value === 'string' && value.length > 0;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+	return typeof value === 'number' && Number.isFinite(value);
+}
+
+// Optional fields: absent / null are fine, present values must match the type.
+function isOptionalNumber(value: unknown): boolean {
+	return value === undefined || value === null || isFiniteNumber(value);
+}
+
+function isOptionalString(value: unknown): boolean {
+	return value === undefined || value === null || typeof value === 'string';
+}
+
+function validateNumericFields(body: Record<string, unknown>, fields: readonly string[]): string | null {
+	for (const field of fields) {
+		if (!isOptionalNumber(body[field])) return `${field} must be a number`;
+	}
+	return null;
+}
+
+function validateSyncRequest(body: unknown): string | null {
+	if (!isPlainObject(body)) return 'Request body must be a JSON object';
+
+	for (const key of ['body_measurements', 'blood_pressure', 'sleep_sessions', 'steps']) {
+		const value = body[key];
+		if (value !== undefined && value !== null && !Array.isArray(value)) return `${key} must be an array`;
+	}
+
+	const bodyMeasurements = (body.body_measurements ?? []) as unknown[];
+	for (let i = 0; i < bodyMeasurements.length; i++) {
+		const m = bodyMeasurements[i];
+		if (!isPlainObject(m)) return `body_measurements[${i}] must be an object`;
+		if (!isNonEmptyString(m.recorded_at)) return `body_measurements[${i}].recorded_at must be a non-empty string`;
+		if (!isOptionalNumber(m.weight_kg)) return `body_measurements[${i}].weight_kg must be a number`;
+		if (!isOptionalNumber(m.body_fat_percent)) return `body_measurements[${i}].body_fat_percent must be a number`;
+	}
+
+	const bloodPressure = (body.blood_pressure ?? []) as unknown[];
+	for (let i = 0; i < bloodPressure.length; i++) {
+		const bp = bloodPressure[i];
+		if (!isPlainObject(bp)) return `blood_pressure[${i}] must be an object`;
+		if (!isNonEmptyString(bp.recorded_at)) return `blood_pressure[${i}].recorded_at must be a non-empty string`;
+		if (!isFiniteNumber(bp.systolic)) return `blood_pressure[${i}].systolic must be a number`;
+		if (!isFiniteNumber(bp.diastolic)) return `blood_pressure[${i}].diastolic must be a number`;
+		if (!isOptionalNumber(bp.pulse)) return `blood_pressure[${i}].pulse must be a number`;
+	}
+
+	const sleepSessions = (body.sleep_sessions ?? []) as unknown[];
+	for (let i = 0; i < sleepSessions.length; i++) {
+		const s = sleepSessions[i];
+		if (!isPlainObject(s)) return `sleep_sessions[${i}] must be an object`;
+		if (!isNonEmptyString(s.start_time)) return `sleep_sessions[${i}].start_time must be a non-empty string`;
+		if (!isNonEmptyString(s.end_time)) return `sleep_sessions[${i}].end_time must be a non-empty string`;
+		if (!isOptionalNumber(s.duration_hours)) return `sleep_sessions[${i}].duration_hours must be a number`;
+		if (s.stages !== undefined && s.stages !== null) {
+			if (!Array.isArray(s.stages)) return `sleep_sessions[${i}].stages must be an array`;
+			for (let j = 0; j < s.stages.length; j++) {
+				const stage = s.stages[j] as unknown;
+				if (!isPlainObject(stage)) return `sleep_sessions[${i}].stages[${j}] must be an object`;
+				if (!isNonEmptyString(stage.stage)) return `sleep_sessions[${i}].stages[${j}].stage must be a non-empty string`;
+				if (!isNonEmptyString(stage.start_time)) return `sleep_sessions[${i}].stages[${j}].start_time must be a non-empty string`;
+				if (!isNonEmptyString(stage.end_time)) return `sleep_sessions[${i}].stages[${j}].end_time must be a non-empty string`;
+			}
+		}
+	}
+
+	const steps = (body.steps ?? []) as unknown[];
+	for (let i = 0; i < steps.length; i++) {
+		const st = steps[i];
+		if (!isPlainObject(st)) return `steps[${i}] must be an object`;
+		if (!isNonEmptyString(st.date) || !DATE_FORMAT.test(st.date)) return `steps[${i}].date must be YYYY-MM-DD`;
+		if (!isFiniteNumber(st.count)) return `steps[${i}].count must be a number`;
+	}
+
+	return null;
+}
+
 // The whole API treats "today" and date-typed columns in this timezone.
 // Health Connect data flows in via the Android client, which records
 // `steps.date` etc. as JST LocalDate, so the server side has to anchor
@@ -241,13 +331,24 @@ function buildDateFilter(
 	return { clause, params };
 }
 
+// Constant-time string comparison via the Workers-specific
+// crypto.subtle.timingSafeEqual extension (throws on unequal lengths,
+// hence the explicit length check — the length itself is not secret).
+function timingSafeEqualStrings(a: string, b: string): boolean {
+	const encoder = new TextEncoder();
+	const aBytes = encoder.encode(a);
+	const bBytes = encoder.encode(b);
+	if (aBytes.byteLength !== bBytes.byteLength) return false;
+	return crypto.subtle.timingSafeEqual(aBytes, bBytes);
+}
+
 function authenticate(request: Request, env: Env): Response | null {
 	const authHeader = request.headers.get('Authorization');
 	if (!authHeader || !authHeader.startsWith('Bearer ')) {
 		return errorResponse('Unauthorized', 401);
 	}
 	const token = authHeader.slice(7);
-	if (token !== env.API_KEY) {
+	if (!timingSafeEqualStrings(token, env.API_KEY)) {
 		return errorResponse('Unauthorized', 401);
 	}
 	return null;
@@ -261,12 +362,18 @@ async function handleHealth(): Promise<Response> {
 }
 
 async function handleSync(request: Request, env: Env): Promise<Response> {
-	let body: SyncRequest;
+	let parsed: unknown;
 	try {
-		body = await request.json();
+		parsed = await request.json();
 	} catch {
 		return errorResponse('Invalid JSON body', 400);
 	}
+
+	const validationError = validateSyncRequest(parsed);
+	if (validationError) {
+		return errorResponse(validationError, 400);
+	}
+	const body = parsed as SyncRequest;
 
 	const counts = {
 		body_measurements: body.body_measurements?.length ?? 0,
@@ -368,17 +475,54 @@ async function handleSync(request: Request, env: Env): Promise<Response> {
 	});
 }
 
+const CPAP_NUMERIC_FIELDS = [
+	'ahi',
+	'ai',
+	'leak',
+	'usage_hours',
+	'ai_count',
+	'hi_count',
+	'csa_count',
+	'snore_count',
+	'ai_total_duration_sec',
+	'hi_total_duration_sec',
+	'pressure_min',
+	'pressure_max',
+	'pressure_mean',
+	'pressure_median',
+	'pressure_p90',
+	'pressure_p95',
+	'br_mean',
+	'br_median',
+	'tv_mean',
+	'tv_median',
+] as const;
+
 async function handleCpap(request: Request, env: Env): Promise<Response> {
-	let body: CpapLog;
+	let parsed: unknown;
 	try {
-		body = await request.json();
+		parsed = await request.json();
 	} catch {
 		return errorResponse('Invalid JSON body', 400);
 	}
 
-	if (!body.recorded_date) {
+	if (!isPlainObject(parsed)) {
+		return errorResponse('Request body must be a JSON object', 400);
+	}
+	if (!parsed.recorded_date) {
 		return errorResponse('recorded_date is required', 400);
 	}
+	if (typeof parsed.recorded_date !== 'string' || !DATE_FORMAT.test(parsed.recorded_date)) {
+		return errorResponse('Invalid recorded_date format (must be YYYY-MM-DD)', 400);
+	}
+	const numericError = validateNumericFields(parsed, CPAP_NUMERIC_FIELDS);
+	if (numericError) {
+		return errorResponse(numericError, 400);
+	}
+	if (!isOptionalString(parsed.notes)) {
+		return errorResponse('notes must be a string', 400);
+	}
+	const body = parsed as unknown as CpapLog;
 
 	return withDbErrorHandling(async () => {
 		await env.health_sync_db
@@ -443,17 +587,33 @@ async function handleCpap(request: Request, env: Env): Promise<Response> {
 	});
 }
 
+const BLOOD_TEST_NUMERIC_FIELDS = ['glucose', 'hba1c', 'hdl', 'ldl', 'tg', 'ua', 'cr', 'egfr', 'ast', 'alt', 'gtp'] as const;
+
 async function handleBloodTest(request: Request, env: Env): Promise<Response> {
-	let body: BloodTest;
+	let parsed: unknown;
 	try {
-		body = await request.json();
+		parsed = await request.json();
 	} catch {
 		return errorResponse('Invalid JSON body', 400);
 	}
 
-	if (!body.test_date) {
+	if (!isPlainObject(parsed)) {
+		return errorResponse('Request body must be a JSON object', 400);
+	}
+	if (!parsed.test_date) {
 		return errorResponse('test_date is required', 400);
 	}
+	if (typeof parsed.test_date !== 'string' || !DATE_FORMAT.test(parsed.test_date)) {
+		return errorResponse('Invalid test_date format (must be YYYY-MM-DD)', 400);
+	}
+	const numericError = validateNumericFields(parsed, BLOOD_TEST_NUMERIC_FIELDS);
+	if (numericError) {
+		return errorResponse(numericError, 400);
+	}
+	if (!isOptionalString(parsed.facility)) {
+		return errorResponse('facility must be a string', 400);
+	}
+	const body = parsed as unknown as BloodTest;
 
 	return withDbErrorHandling(async () => {
 		await env.health_sync_db
@@ -514,27 +674,40 @@ async function handleGetBloodTest(request: Request, env: Env): Promise<Response>
 
 const VALID_MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
 
+const MEAL_NUMERIC_FIELDS = ['calories_kcal', 'protein_g', 'fat_g', 'carbs_g', 'fiber_g', 'salt_g'] as const;
+
 async function handlePostMeal(request: Request, env: Env): Promise<Response> {
-	let body: MealRecord;
+	let parsed: unknown;
 	try {
-		body = await request.json();
+		parsed = await request.json();
 	} catch {
 		return errorResponse('Invalid JSON body', 400);
 	}
 
 	// バリデーション
-	if (!body.date) {
+	if (!isPlainObject(parsed)) {
+		return errorResponse('Request body must be a JSON object', 400);
+	}
+	if (!parsed.date) {
 		return errorResponse('date is required', 400);
 	}
-	if (!DATE_FORMAT.test(body.date)) {
+	if (typeof parsed.date !== 'string' || !DATE_FORMAT.test(parsed.date)) {
 		return errorResponse('Invalid date format (must be YYYY-MM-DD)', 400);
 	}
-	if (!body.meal_type || !(VALID_MEAL_TYPES as readonly string[]).includes(body.meal_type)) {
+	if (!isNonEmptyString(parsed.meal_type) || !(VALID_MEAL_TYPES as readonly string[]).includes(parsed.meal_type)) {
 		return errorResponse('meal_type must be one of: breakfast, lunch, dinner, snack', 400);
 	}
-	if (!body.description || body.description.trim() === '') {
+	if (typeof parsed.description !== 'string' || parsed.description.trim() === '') {
 		return errorResponse('description is required', 400);
 	}
+	const numericError = validateNumericFields(parsed, MEAL_NUMERIC_FIELDS);
+	if (numericError) {
+		return errorResponse(numericError, 400);
+	}
+	if (!isOptionalString(parsed.note)) {
+		return errorResponse('note must be a string', 400);
+	}
+	const body = parsed as unknown as MealRecord;
 
 	return withDbErrorHandling(async () => {
 		await env.health_sync_db
@@ -637,26 +810,39 @@ async function handleMetrics(request: Request, env: Env): Promise<Response> {
 
 		if (sessionRows.length > 0) {
 			const sessionIds = sessionRows.map((s) => s.id as number);
-			const placeholders = sessionIds.map(() => '?').join(',');
-			const allStages = await env.health_sync_db
-				.prepare(
-					`SELECT sleep_session_id, stage, start_time, end_time
-					 FROM sleep_stages
-					 WHERE sleep_session_id IN (${placeholders})
-					 ORDER BY start_time ASC`,
-				)
-				.bind(...sessionIds)
-				.all<{
-					sleep_session_id: number;
-					stage: string;
-					start_time: string;
-					end_time: string;
-				}>();
+			// D1 caps bound parameters at 100 per query, so the IN list is chunked.
+			// Each session's stages land entirely in one chunk, so the per-session
+			// start_time ASC ordering survives the split.
+			const CHUNK_SIZE = 100;
+			const chunks: number[][] = [];
+			for (let i = 0; i < sessionIds.length; i += CHUNK_SIZE) {
+				chunks.push(sessionIds.slice(i, i + CHUNK_SIZE));
+			}
+			const stageResults = await Promise.all(
+				chunks.map((ids) =>
+					env.health_sync_db
+						.prepare(
+							`SELECT sleep_session_id, stage, start_time, end_time
+							 FROM sleep_stages
+							 WHERE sleep_session_id IN (${ids.map(() => '?').join(',')})
+							 ORDER BY start_time ASC`,
+						)
+						.bind(...ids)
+						.all<{
+							sleep_session_id: number;
+							stage: string;
+							start_time: string;
+							end_time: string;
+						}>(),
+				),
+			);
 
-			for (const row of allStages.results) {
-				const list = stagesBySessionId.get(row.sleep_session_id) ?? [];
-				list.push({ stage: row.stage, start_time: row.start_time, end_time: row.end_time });
-				stagesBySessionId.set(row.sleep_session_id, list);
+			for (const result of stageResults) {
+				for (const row of result.results) {
+					const list = stagesBySessionId.get(row.sleep_session_id) ?? [];
+					list.push({ stage: row.stage, start_time: row.start_time, end_time: row.end_time });
+					stagesBySessionId.set(row.sleep_session_id, list);
+				}
 			}
 		}
 
