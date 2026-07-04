@@ -52,13 +52,15 @@ npx wrangler d1 migrations apply health-sync-db --local
 npx wrangler d1 migrations apply health-sync-db --remote
 ```
 
-**Tests replay `schema.sql` + `migrations/*.sql`.** `test/setup.ts` imports each SQL file via Vite `?raw` and runs them through `db.exec()` in order. The `?raw` ambient module is declared in `test/env.d.ts`. When you add a new migration, also add a matching `import` line in `test/setup.ts` so it gets replayed; otherwise tests will fail with "no such column / table". (D1's `exec()` requires statement-per-line with no comments, so the helper in `test/setup.ts` strips `--` comments and collapses each statement to a single line before handing it over.)
+**Tests replay `schema.sql` + `migrations/*.sql`.** `test/setup.ts` auto-discovers migration files via `import.meta.glob('../migrations/*.sql', { query: '?raw', … })`, sorts them by filename, and runs them through `db.exec()` in order — adding a new migration file is enough, no import line to maintain. The `?raw` ambient module is declared in `test/env.d.ts`; `vite/client` types are enabled in `test/tsconfig.json` for `import.meta.glob`. (D1's `exec()` requires statement-per-line with no comments, so the helper in `test/setup.ts` strips `--` comments and collapses each statement to a single line before handing it over.)
 
 ## Architecture
 
 ### Routing
 
-`src/index.ts` exports a single `fetch` handler that pattern-matches on `path` + `method`. There is no router framework. All endpoints except `GET /health` go through `authenticate(request, env)` which compares a `Bearer <token>` header against the `API_KEY` secret. In tests `API_KEY` is bound to `dev-local-key` via `vitest.config.mts`.
+`src/index.ts` exports a single `fetch` handler that pattern-matches on `path` + `method`. There is no router framework. All endpoints except `GET /health` go through `authenticate(request, env)` which compares a `Bearer <token>` header against the `API_KEY` secret using the Workers-specific `crypto.subtle.timingSafeEqual` (constant-time). In tests `API_KEY` is bound to `dev-local-key` via `vitest.config.mts`.
+
+All POST bodies are validated (object shape, required fields, field types, `YYYY-MM-DD` formats) before any D1 statement is prepared — malformed payloads return a 400 with a field-specific message instead of surfacing as a 500 from D1. See the `validate*` helpers and the `*_NUMERIC_FIELDS` lists in `src/index.ts`; `test/validation.spec.ts` covers the negative cases.
 
 A top-level `try/catch` in `fetch` distinguishes D1/SQLITE-flavored errors from generic ones for the 500 response message.
 
@@ -66,12 +68,12 @@ A top-level `try/catch` in `fetch` distinguishes D1/SQLITE-flavored errors from 
 
 - `GET /health` — health check, no auth.
 - `POST /sync` — **upsert** batch of `body_measurements`, `blood_pressure`, `sleep_sessions`, `steps` (each via `ON CONFLICT … DO UPDATE`, keyed on `recorded_at` / `start_time` / `date`). If a `sleep_sessions` entry includes a `stages[]` array, the matching `sleep_stages` rows are replaced (DELETE + INSERT in a single `db.batch`) and consecutive same-stage rows are merged via `mergeConsecutiveStages`.
-- `POST /cpap` — upsert one CPAP log row keyed on `recorded_date`. `ai` and `notes` use `COALESCE` so existing values are preserved when the incoming payload omits them; the rest overwrite.
+- `POST /cpap` — upsert one CPAP log row keyed on `recorded_date`. `ai` and `notes` use `COALESCE(cpap_logs.x, excluded.x)`: an existing non-NULL value always wins, so these two fields can only be filled in while NULL and are never overwritten by later payloads; the rest overwrite.
 - `POST /blood-test` — upsert one blood test row keyed on `test_date`.
 - `GET /blood-test` — list blood tests, no default date window (returns all rows when no params).
 - `POST /meals` — upsert one meal entry keyed on `(date, meal_type)`. `meal_type` must be one of `breakfast | lunch | dinner | snack`.
 - `GET /meals` — list meals, default window 7 days, ordered by `date ASC` then meal-type order.
-- `GET /metrics` — fan-out `Promise.all` over body, BP, sleep sessions, steps, CPAP, blood tests; default window 7 days. Sleep sessions are joined with their `sleep_stages` via a single `WHERE sleep_session_id IN (…)` query (this avoided an N+1 — see commit `80647f7`; do not regress this).
+- `GET /metrics` — fan-out `Promise.all` over body, BP, sleep sessions, steps, CPAP, blood tests; default window 7 days. Sleep sessions are joined with their `sleep_stages` via `WHERE sleep_session_id IN (…)` queries chunked to ≤100 ids (this avoided an N+1 — see commit `80647f7`; the chunking respects D1's 100-bound-parameters-per-query limit; do not regress either).
 
 ### Date filter helpers
 
@@ -97,7 +99,7 @@ All list endpoints accept the same query-param shape, parsed by `parseDateRangeP
 
 D1 tables (see `schema.sql` + `migrations/`):
 
-- `body_measurements`, `blood_pressure`, `sleep_sessions`, `steps` — the four "sync" tables, each with a unique index on its time column to enable upserts (added in `0002`).
+- `body_measurements`, `blood_pressure`, `sleep_sessions`, `steps` — the four "sync" tables, each with a unique index on its time column to enable upserts (added in `0002`; the `steps` index had to be recreated in `0007` because `schema.sql` already had a **non-unique** `idx_steps_date`, which made `0002`'s `CREATE UNIQUE INDEX IF NOT EXISTS` a silent no-op and broke `ON CONFLICT(date)` on databases bootstrapped from `schema.sql`).
 - `sleep_stages` — Health Connect-style stage segments, FK to `sleep_sessions(id)` with `ON DELETE CASCADE` (`0006`).
 - `cpap_logs` — CPAP therapy data; original columns in `0001`, expanded in `0004` with pressure / breathing rate / tidal volume statistics and event counts.
 - `blood_tests` — clinical lab values keyed on `test_date` (`0003`).
