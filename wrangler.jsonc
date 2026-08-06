@@ -6,7 +6,7 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "health-sync-api",
 	"main": "src/index.ts",
-	"compatibility_date": "2026-06-24",
+	"compatibility_date": "2026-07-25",
 	"observability": {
 		"enabled": true,
 	},
