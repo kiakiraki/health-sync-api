@@ -101,6 +101,28 @@ describe('RingConn Gen 2 metrics', () => {
 			expect(rows.results[0].total_calories_kcal).toBe(1900);
 		});
 
+		it('preserves the other daily_activity calorie field when a payload carries only one', async () => {
+			const date = '2021-01-10';
+
+			// active and total come from separate Health Connect record types,
+			// so one-sided payloads are a normal occurrence.
+			await makeRequest('/sync', {
+				method: 'POST',
+				body: { daily_activity: [{ date, active_calories_kcal: 320 }] },
+				headers: createAuthHeaders(),
+			});
+			await makeRequest('/sync', {
+				method: 'POST',
+				body: { daily_activity: [{ date, total_calories_kcal: 2100 }] },
+				headers: createAuthHeaders(),
+			});
+
+			const row = await env.health_sync_db.prepare('SELECT * FROM daily_activity WHERE date = ?').bind(date).first();
+			expect(row).not.toBeNull();
+			expect(row!.active_calories_kcal).toBe(320);
+			expect(row!.total_calories_kcal).toBe(2100);
+		});
+
 		it('still accepts a payload without the new keys (backward compatibility)', async () => {
 			const response = await makeRequest('/sync', {
 				method: 'POST',

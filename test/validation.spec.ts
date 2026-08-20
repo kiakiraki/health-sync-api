@@ -90,7 +90,29 @@ describe('request body validation', () => {
 			});
 			expect(response.status).toBe(400);
 			const data = await response.json<AnyJson>();
-			expect(data.error).toBe('heart_rate[0].bpm must be a number');
+			expect(data.error).toBe('heart_rate[0].bpm must be an integer');
+		});
+
+		it('returns 400 when heart_rate bpm is not an integer', async () => {
+			const response = await makeRequest('/sync', {
+				method: 'POST',
+				headers: createAuthHeaders(),
+				body: { heart_rate: [{ recorded_at: '2022-01-01T00:00:00Z', bpm: 72.4 }] },
+			});
+			expect(response.status).toBe(400);
+			const data = await response.json<AnyJson>();
+			expect(data.error).toBe('heart_rate[0].bpm must be an integer');
+		});
+
+		it('returns 400 when heart_rate recorded_at is not a UTC ISO instant', async () => {
+			const response = await makeRequest('/sync', {
+				method: 'POST',
+				headers: createAuthHeaders(),
+				body: { heart_rate: [{ recorded_at: '2022-01-01T09:00:00+09:00', bpm: 72 }] },
+			});
+			expect(response.status).toBe(400);
+			const data = await response.json<AnyJson>();
+			expect(data.error).toBe('heart_rate[0].recorded_at must be a UTC ISO 8601 datetime (YYYY-MM-DDThh:mm:ssZ)');
 		});
 
 		it('returns 400 when resting_heart_rate date is malformed', async () => {
@@ -112,7 +134,18 @@ describe('request body validation', () => {
 			});
 			expect(response.status).toBe(400);
 			const data = await response.json<AnyJson>();
-			expect(data.error).toBe('spo2[0].percentage must be a number');
+			expect(data.error).toBe('spo2[0].percentage must be a number between 0 and 100');
+		});
+
+		it('returns 400 when spo2 percentage is out of range', async () => {
+			const response = await makeRequest('/sync', {
+				method: 'POST',
+				headers: createAuthHeaders(),
+				body: { spo2: [{ recorded_at: '2022-01-01T00:00:00Z', percentage: 150 }] },
+			});
+			expect(response.status).toBe(400);
+			const data = await response.json<AnyJson>();
+			expect(data.error).toBe('spo2[0].percentage must be a number between 0 and 100');
 		});
 
 		it('returns 400 when daily_activity date is malformed', async () => {

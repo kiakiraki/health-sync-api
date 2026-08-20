@@ -155,6 +155,10 @@ async function withDbErrorHandling(handler: () => Promise<Response>): Promise<Re
 }
 
 const DATE_FORMAT = /^\d{4}-\d{2}-\d{2}$/;
+// UTC ISO 8601 instant ('...Z'), the format buildDateFilter compares against
+// and the upsert conflict target dedupes on — an offset form of the same
+// instant ('+09:00') would silently escape both.
+const UTC_INSTANT_FORMAT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 
 // --- request body validation helpers -------------------------------------
 // SQLite (D1) has no strict column typing, so without these checks a payload
@@ -256,8 +260,9 @@ function validateSyncRequest(body: unknown): string | null {
 	for (let i = 0; i < heartRate.length; i++) {
 		const hr = heartRate[i];
 		if (!isPlainObject(hr)) return `heart_rate[${i}] must be an object`;
-		if (!isNonEmptyString(hr.recorded_at)) return `heart_rate[${i}].recorded_at must be a non-empty string`;
-		if (!isFiniteNumber(hr.bpm)) return `heart_rate[${i}].bpm must be a number`;
+		if (!isNonEmptyString(hr.recorded_at) || !UTC_INSTANT_FORMAT.test(hr.recorded_at))
+			return `heart_rate[${i}].recorded_at must be a UTC ISO 8601 datetime (YYYY-MM-DDThh:mm:ssZ)`;
+		if (!isFiniteNumber(hr.bpm) || !Number.isInteger(hr.bpm)) return `heart_rate[${i}].bpm must be an integer`;
 	}
 
 	const restingHeartRate = (body.resting_heart_rate ?? []) as unknown[];
@@ -265,15 +270,17 @@ function validateSyncRequest(body: unknown): string | null {
 		const rhr = restingHeartRate[i];
 		if (!isPlainObject(rhr)) return `resting_heart_rate[${i}] must be an object`;
 		if (!isNonEmptyString(rhr.date) || !DATE_FORMAT.test(rhr.date)) return `resting_heart_rate[${i}].date must be YYYY-MM-DD`;
-		if (!isFiniteNumber(rhr.bpm)) return `resting_heart_rate[${i}].bpm must be a number`;
+		if (!isFiniteNumber(rhr.bpm) || !Number.isInteger(rhr.bpm)) return `resting_heart_rate[${i}].bpm must be an integer`;
 	}
 
 	const spo2 = (body.spo2 ?? []) as unknown[];
 	for (let i = 0; i < spo2.length; i++) {
 		const sp = spo2[i];
 		if (!isPlainObject(sp)) return `spo2[${i}] must be an object`;
-		if (!isNonEmptyString(sp.recorded_at)) return `spo2[${i}].recorded_at must be a non-empty string`;
-		if (!isFiniteNumber(sp.percentage)) return `spo2[${i}].percentage must be a number`;
+		if (!isNonEmptyString(sp.recorded_at) || !UTC_INSTANT_FORMAT.test(sp.recorded_at))
+			return `spo2[${i}].recorded_at must be a UTC ISO 8601 datetime (YYYY-MM-DDThh:mm:ssZ)`;
+		if (!isFiniteNumber(sp.percentage) || sp.percentage < 0 || sp.percentage > 100)
+			return `spo2[${i}].percentage must be a number between 0 and 100`;
 	}
 
 	const dailyActivity = (body.daily_activity ?? []) as unknown[];
@@ -527,11 +534,14 @@ async function handleSync(request: Request, env: Env): Promise<Response> {
 		}
 
 		if (body.daily_activity?.length) {
+			// COALESCE(excluded.x, …): active and total come from separate Health
+			// Connect record types, so a payload carrying only one of them must not
+			// NULL out the other — unlike cpap's COALESCE, the incoming value wins.
 			const stmt = db.prepare(
 				`INSERT INTO daily_activity (date, active_calories_kcal, total_calories_kcal) VALUES (?, ?, ?)
 				 ON CONFLICT(date) DO UPDATE SET
-				 active_calories_kcal = excluded.active_calories_kcal,
-				 total_calories_kcal = excluded.total_calories_kcal`,
+				 active_calories_kcal = COALESCE(excluded.active_calories_kcal, daily_activity.active_calories_kcal),
+				 total_calories_kcal = COALESCE(excluded.total_calories_kcal, daily_activity.total_calories_kcal)`,
 			);
 			for (const da of body.daily_activity) {
 				phase1.push(stmt.bind(da.date, da.active_calories_kcal ?? null, da.total_calories_kcal ?? null));
