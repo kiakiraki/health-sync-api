@@ -67,13 +67,13 @@ A top-level `try/catch` in `fetch` distinguishes D1/SQLITE-flavored errors from 
 ### API Endpoints
 
 - `GET /health` — health check, no auth.
-- `POST /sync` — **upsert** batch of `body_measurements`, `blood_pressure`, `sleep_sessions`, `steps` (each via `ON CONFLICT … DO UPDATE`, keyed on `recorded_at` / `start_time` / `date`). If a `sleep_sessions` entry includes a `stages[]` array, the matching `sleep_stages` rows are replaced (DELETE + INSERT in a single `db.batch`) and consecutive same-stage rows are merged via `mergeConsecutiveStages`.
+- `POST /sync` — **upsert** batch of `body_measurements`, `blood_pressure`, `sleep_sessions`, `steps`, `heart_rate`, `resting_heart_rate`, `spo2`, `daily_activity` (each via `ON CONFLICT … DO UPDATE`, keyed on `recorded_at` / `start_time` / `date`; `heart_rate` and `spo2` key on `recorded_at`, `resting_heart_rate` and `daily_activity` key on `date`). If a `sleep_sessions` entry includes a `stages[]` array, the matching `sleep_stages` rows are replaced (DELETE + INSERT in a single `db.batch`) and consecutive same-stage rows are merged via `mergeConsecutiveStages`.
 - `POST /cpap` — upsert one CPAP log row keyed on `recorded_date`. `ai` and `notes` use `COALESCE(cpap_logs.x, excluded.x)`: an existing non-NULL value always wins, so these two fields can only be filled in while NULL and are never overwritten by later payloads; the rest overwrite.
 - `POST /blood-test` — upsert one blood test row keyed on `test_date`.
 - `GET /blood-test` — list blood tests, no default date window (returns all rows when no params).
 - `POST /meals` — upsert one meal entry keyed on `(date, meal_type)`. `meal_type` must be one of `breakfast | lunch | dinner | snack`.
 - `GET /meals` — list meals, default window 7 days, ordered by `date ASC` then meal-type order.
-- `GET /metrics` — fan-out `Promise.all` over body, BP, sleep sessions, steps, CPAP, blood tests; default window 7 days. Sleep sessions are joined with their `sleep_stages` via `WHERE sleep_session_id IN (…)` queries chunked to ≤100 ids (this avoided an N+1 — see commit `80647f7`; the chunking respects D1's 100-bound-parameters-per-query limit; do not regress either).
+- `GET /metrics` — fan-out `Promise.all` over body, BP, sleep sessions, steps, CPAP, blood tests, heart rate, resting heart rate, SpO2, daily activity; default window 7 days. Sleep sessions are joined with their `sleep_stages` via `WHERE sleep_session_id IN (…)` queries chunked to ≤100 ids (this avoided an N+1 — see commit `80647f7`; the chunking respects D1's 100-bound-parameters-per-query limit; do not regress either).
 
 ### Date filter helpers
 
@@ -89,9 +89,9 @@ All list endpoints accept the same query-param shape, parsed by `parseDateRangeP
 
 `buildDateFilter(column, type, range)` constructs the `WHERE` fragment. For `'datetime'` columns the bounds are converted from JST wall-clock days to UTC ISO strings (`YYYY-MM-DDT...+09:00 → ...Z`), and the upper bound is **half-open** (`< start of (to+1) JST day in UTC`) — an inclusive `<= '...23:59:59.999Z'` would silently drop stored `'...59Z'` values because `Z` > `.` in ASCII order. `'date'` columns are compared as JST-day strings directly. Columns and their types:
 
-- `recorded_at` (body_measurements, blood_pressure) → datetime (UTC `Z` stored, JST window applied)
+- `recorded_at` (body_measurements, blood_pressure, heart_rate, spo2) → datetime (UTC `Z` stored, JST window applied)
 - `start_time` (sleep_sessions) → datetime
-- `date` (steps, meals) → date (JST day string)
+- `date` (steps, meals, resting_heart_rate, daily_activity) → date (JST day string)
 - `recorded_date` (cpap_logs) → date
 - `test_date` (blood_tests) → date
 
@@ -104,6 +104,7 @@ D1 tables (see `schema.sql` + `migrations/`):
 - `cpap_logs` — CPAP therapy data; original columns in `0001`, expanded in `0004` with pressure / breathing rate / tidal volume statistics and event counts.
 - `blood_tests` — clinical lab values keyed on `test_date` (`0003`).
 - `meals` — meal logging keyed on `(date, meal_type)` (`0005`).
+- `heart_rate`, `resting_heart_rate`, `spo2`, `daily_activity` — RingConn Gen 2 smart ring metrics synced from Health Connect (`0008`); `heart_rate`/`spo2` key on `recorded_at`, `resting_heart_rate`/`daily_activity` key on `date`.
 
 ### Environment Bindings
 

@@ -71,6 +71,61 @@ describe('request body validation', () => {
 			expect(data.error).toBe('sleep_sessions[0].stages[0].end_time must be a non-empty string');
 		});
 
+		it('returns 400 when heart_rate is not an array', async () => {
+			const response = await makeRequest('/sync', {
+				method: 'POST',
+				headers: createAuthHeaders(),
+				body: { heart_rate: 'not-an-array' },
+			});
+			expect(response.status).toBe(400);
+			const data = await response.json<AnyJson>();
+			expect(data.error).toBe('heart_rate must be an array');
+		});
+
+		it('returns 400 when heart_rate entry is missing bpm', async () => {
+			const response = await makeRequest('/sync', {
+				method: 'POST',
+				headers: createAuthHeaders(),
+				body: { heart_rate: [{ recorded_at: '2022-01-01T00:00:00Z' }] },
+			});
+			expect(response.status).toBe(400);
+			const data = await response.json<AnyJson>();
+			expect(data.error).toBe('heart_rate[0].bpm must be a number');
+		});
+
+		it('returns 400 when resting_heart_rate date is malformed', async () => {
+			const response = await makeRequest('/sync', {
+				method: 'POST',
+				headers: createAuthHeaders(),
+				body: { resting_heart_rate: [{ date: '2022/01/01', bpm: 55 }] },
+			});
+			expect(response.status).toBe(400);
+			const data = await response.json<AnyJson>();
+			expect(data.error).toBe('resting_heart_rate[0].date must be YYYY-MM-DD');
+		});
+
+		it('returns 400 when spo2 percentage is not a number', async () => {
+			const response = await makeRequest('/sync', {
+				method: 'POST',
+				headers: createAuthHeaders(),
+				body: { spo2: [{ recorded_at: '2022-01-01T00:00:00Z', percentage: '98' }] },
+			});
+			expect(response.status).toBe(400);
+			const data = await response.json<AnyJson>();
+			expect(data.error).toBe('spo2[0].percentage must be a number');
+		});
+
+		it('returns 400 when daily_activity date is malformed', async () => {
+			const response = await makeRequest('/sync', {
+				method: 'POST',
+				headers: createAuthHeaders(),
+				body: { daily_activity: [{ date: '2022.01.01' }] },
+			});
+			expect(response.status).toBe(400);
+			const data = await response.json<AnyJson>();
+			expect(data.error).toBe('daily_activity[0].date must be YYYY-MM-DD');
+		});
+
 		it('still accepts a valid payload', async () => {
 			const response = await makeRequest('/sync', {
 				method: 'POST',

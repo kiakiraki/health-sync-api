@@ -83,11 +83,36 @@ interface MealRecord {
 	note?: string;
 }
 
+interface HeartRateSample {
+	recorded_at: string;
+	bpm: number;
+}
+
+interface RestingHeartRate {
+	date: string;
+	bpm: number;
+}
+
+interface Spo2Sample {
+	recorded_at: string;
+	percentage: number;
+}
+
+interface DailyActivity {
+	date: string;
+	active_calories_kcal?: number;
+	total_calories_kcal?: number;
+}
+
 interface SyncRequest {
 	body_measurements?: BodyMeasurement[];
 	blood_pressure?: BloodPressure[];
 	sleep_sessions?: SleepSession[];
 	steps?: Steps[];
+	heart_rate?: HeartRateSample[];
+	resting_heart_rate?: RestingHeartRate[];
+	spo2?: Spo2Sample[];
+	daily_activity?: DailyActivity[];
 }
 
 function mergeConsecutiveStages(stages: SleepStage[]): SleepStage[] {
@@ -167,7 +192,16 @@ function validateNumericFields(body: Record<string, unknown>, fields: readonly s
 function validateSyncRequest(body: unknown): string | null {
 	if (!isPlainObject(body)) return 'Request body must be a JSON object';
 
-	for (const key of ['body_measurements', 'blood_pressure', 'sleep_sessions', 'steps']) {
+	for (const key of [
+		'body_measurements',
+		'blood_pressure',
+		'sleep_sessions',
+		'steps',
+		'heart_rate',
+		'resting_heart_rate',
+		'spo2',
+		'daily_activity',
+	]) {
 		const value = body[key];
 		if (value !== undefined && value !== null && !Array.isArray(value)) return `${key} must be an array`;
 	}
@@ -216,6 +250,39 @@ function validateSyncRequest(body: unknown): string | null {
 		if (!isPlainObject(st)) return `steps[${i}] must be an object`;
 		if (!isNonEmptyString(st.date) || !DATE_FORMAT.test(st.date)) return `steps[${i}].date must be YYYY-MM-DD`;
 		if (!isFiniteNumber(st.count)) return `steps[${i}].count must be a number`;
+	}
+
+	const heartRate = (body.heart_rate ?? []) as unknown[];
+	for (let i = 0; i < heartRate.length; i++) {
+		const hr = heartRate[i];
+		if (!isPlainObject(hr)) return `heart_rate[${i}] must be an object`;
+		if (!isNonEmptyString(hr.recorded_at)) return `heart_rate[${i}].recorded_at must be a non-empty string`;
+		if (!isFiniteNumber(hr.bpm)) return `heart_rate[${i}].bpm must be a number`;
+	}
+
+	const restingHeartRate = (body.resting_heart_rate ?? []) as unknown[];
+	for (let i = 0; i < restingHeartRate.length; i++) {
+		const rhr = restingHeartRate[i];
+		if (!isPlainObject(rhr)) return `resting_heart_rate[${i}] must be an object`;
+		if (!isNonEmptyString(rhr.date) || !DATE_FORMAT.test(rhr.date)) return `resting_heart_rate[${i}].date must be YYYY-MM-DD`;
+		if (!isFiniteNumber(rhr.bpm)) return `resting_heart_rate[${i}].bpm must be a number`;
+	}
+
+	const spo2 = (body.spo2 ?? []) as unknown[];
+	for (let i = 0; i < spo2.length; i++) {
+		const sp = spo2[i];
+		if (!isPlainObject(sp)) return `spo2[${i}] must be an object`;
+		if (!isNonEmptyString(sp.recorded_at)) return `spo2[${i}].recorded_at must be a non-empty string`;
+		if (!isFiniteNumber(sp.percentage)) return `spo2[${i}].percentage must be a number`;
+	}
+
+	const dailyActivity = (body.daily_activity ?? []) as unknown[];
+	for (let i = 0; i < dailyActivity.length; i++) {
+		const da = dailyActivity[i];
+		if (!isPlainObject(da)) return `daily_activity[${i}] must be an object`;
+		if (!isNonEmptyString(da.date) || !DATE_FORMAT.test(da.date)) return `daily_activity[${i}].date must be YYYY-MM-DD`;
+		if (!isOptionalNumber(da.active_calories_kcal)) return `daily_activity[${i}].active_calories_kcal must be a number`;
+		if (!isOptionalNumber(da.total_calories_kcal)) return `daily_activity[${i}].total_calories_kcal must be a number`;
 	}
 
 	return null;
@@ -380,6 +447,10 @@ async function handleSync(request: Request, env: Env): Promise<Response> {
 		blood_pressure: body.blood_pressure?.length ?? 0,
 		sleep_sessions: body.sleep_sessions?.length ?? 0,
 		steps: body.steps?.length ?? 0,
+		heart_rate: body.heart_rate?.length ?? 0,
+		resting_heart_rate: body.resting_heart_rate?.length ?? 0,
+		spo2: body.spo2?.length ?? 0,
+		daily_activity: body.daily_activity?.length ?? 0,
 	};
 
 	return withDbErrorHandling(async () => {
@@ -422,6 +493,48 @@ async function handleSync(request: Request, env: Env): Promise<Response> {
 			);
 			for (const st of body.steps) {
 				phase1.push(stmt.bind(st.date, st.count));
+			}
+		}
+
+		if (body.heart_rate?.length) {
+			const stmt = db.prepare(
+				`INSERT INTO heart_rate (recorded_at, bpm) VALUES (?, ?)
+				 ON CONFLICT(recorded_at) DO UPDATE SET bpm = excluded.bpm`,
+			);
+			for (const hr of body.heart_rate) {
+				phase1.push(stmt.bind(hr.recorded_at, hr.bpm));
+			}
+		}
+
+		if (body.resting_heart_rate?.length) {
+			const stmt = db.prepare(
+				`INSERT INTO resting_heart_rate (date, bpm) VALUES (?, ?)
+				 ON CONFLICT(date) DO UPDATE SET bpm = excluded.bpm`,
+			);
+			for (const rhr of body.resting_heart_rate) {
+				phase1.push(stmt.bind(rhr.date, rhr.bpm));
+			}
+		}
+
+		if (body.spo2?.length) {
+			const stmt = db.prepare(
+				`INSERT INTO spo2 (recorded_at, percentage) VALUES (?, ?)
+				 ON CONFLICT(recorded_at) DO UPDATE SET percentage = excluded.percentage`,
+			);
+			for (const sp of body.spo2) {
+				phase1.push(stmt.bind(sp.recorded_at, sp.percentage));
+			}
+		}
+
+		if (body.daily_activity?.length) {
+			const stmt = db.prepare(
+				`INSERT INTO daily_activity (date, active_calories_kcal, total_calories_kcal) VALUES (?, ?, ?)
+				 ON CONFLICT(date) DO UPDATE SET
+				 active_calories_kcal = excluded.active_calories_kcal,
+				 total_calories_kcal = excluded.total_calories_kcal`,
+			);
+			for (const da of body.daily_activity) {
+				phase1.push(stmt.bind(da.date, da.active_calories_kcal ?? null, da.total_calories_kcal ?? null));
 			}
 		}
 
@@ -777,33 +890,54 @@ async function handleMetrics(request: Request, env: Env): Promise<Response> {
 		const stFilter = buildDateFilter('date', 'date', range);
 		const cpFilter = buildDateFilter('recorded_date', 'date', range);
 		const btFilter = buildDateFilter('test_date', 'date', range);
+		const hrFilter = buildDateFilter('recorded_at', 'datetime', range);
+		const rhrFilter = buildDateFilter('date', 'date', range);
+		const spo2Filter = buildDateFilter('recorded_at', 'datetime', range);
+		const daFilter = buildDateFilter('date', 'date', range);
 
-		const [bodyMeasurements, bloodPressure, sleepSessions, steps, cpapLogs, bloodTests] = await Promise.all([
-			env.health_sync_db
-				.prepare(`SELECT * FROM body_measurements${bmFilter.clause} ORDER BY recorded_at DESC`)
-				.bind(...bmFilter.params)
-				.all(),
-			env.health_sync_db
-				.prepare(`SELECT * FROM blood_pressure${bpFilter.clause} ORDER BY recorded_at DESC`)
-				.bind(...bpFilter.params)
-				.all(),
-			env.health_sync_db
-				.prepare(`SELECT * FROM sleep_sessions${ssFilter.clause} ORDER BY start_time DESC`)
-				.bind(...ssFilter.params)
-				.all(),
-			env.health_sync_db
-				.prepare(`SELECT * FROM steps${stFilter.clause} ORDER BY date DESC`)
-				.bind(...stFilter.params)
-				.all(),
-			env.health_sync_db
-				.prepare(`SELECT * FROM cpap_logs${cpFilter.clause} ORDER BY recorded_date DESC`)
-				.bind(...cpFilter.params)
-				.all(),
-			env.health_sync_db
-				.prepare(`SELECT * FROM blood_tests${btFilter.clause} ORDER BY test_date DESC`)
-				.bind(...btFilter.params)
-				.all(),
-		]);
+		const [bodyMeasurements, bloodPressure, sleepSessions, steps, cpapLogs, bloodTests, heartRate, restingHeartRate, spo2, dailyActivity] =
+			await Promise.all([
+				env.health_sync_db
+					.prepare(`SELECT * FROM body_measurements${bmFilter.clause} ORDER BY recorded_at DESC`)
+					.bind(...bmFilter.params)
+					.all(),
+				env.health_sync_db
+					.prepare(`SELECT * FROM blood_pressure${bpFilter.clause} ORDER BY recorded_at DESC`)
+					.bind(...bpFilter.params)
+					.all(),
+				env.health_sync_db
+					.prepare(`SELECT * FROM sleep_sessions${ssFilter.clause} ORDER BY start_time DESC`)
+					.bind(...ssFilter.params)
+					.all(),
+				env.health_sync_db
+					.prepare(`SELECT * FROM steps${stFilter.clause} ORDER BY date DESC`)
+					.bind(...stFilter.params)
+					.all(),
+				env.health_sync_db
+					.prepare(`SELECT * FROM cpap_logs${cpFilter.clause} ORDER BY recorded_date DESC`)
+					.bind(...cpFilter.params)
+					.all(),
+				env.health_sync_db
+					.prepare(`SELECT * FROM blood_tests${btFilter.clause} ORDER BY test_date DESC`)
+					.bind(...btFilter.params)
+					.all(),
+				env.health_sync_db
+					.prepare(`SELECT * FROM heart_rate${hrFilter.clause} ORDER BY recorded_at DESC`)
+					.bind(...hrFilter.params)
+					.all(),
+				env.health_sync_db
+					.prepare(`SELECT * FROM resting_heart_rate${rhrFilter.clause} ORDER BY date DESC`)
+					.bind(...rhrFilter.params)
+					.all(),
+				env.health_sync_db
+					.prepare(`SELECT * FROM spo2${spo2Filter.clause} ORDER BY recorded_at DESC`)
+					.bind(...spo2Filter.params)
+					.all(),
+				env.health_sync_db
+					.prepare(`SELECT * FROM daily_activity${daFilter.clause} ORDER BY date DESC`)
+					.bind(...daFilter.params)
+					.all(),
+			]);
 
 		const sessionRows = sleepSessions.results as Record<string, unknown>[];
 		const stagesBySessionId = new Map<number, Array<{ stage: string; start_time: string; end_time: string }>>();
@@ -858,6 +992,10 @@ async function handleMetrics(request: Request, env: Env): Promise<Response> {
 			steps: steps.results,
 			cpap_logs: cpapLogs.results,
 			blood_tests: bloodTests.results,
+			heart_rate: heartRate.results,
+			resting_heart_rate: restingHeartRate.results,
+			spo2: spo2.results,
+			daily_activity: dailyActivity.results,
 		});
 	});
 }
