@@ -37,6 +37,8 @@ npm run typecheck      # tsc --noEmit -p test/tsconfig.json
 
 Lint stack: ESLint v10 + `typescript-eslint` (recommended ruleset) with `eslint-config-prettier` to disable stylistic rules. Prettier config is in `.prettierrc` (tabs, single quotes, semi, `printWidth: 140`); ignores in `.prettierignore`. CI runs `format:check`, `lint`, `typecheck`, and tests on every PR.
 
+Two TypeScript toolchains coexist via npm aliases: `@typescript/native` (`npm:typescript@^7`) provides the `tsc` binary used by `typecheck`, while `typescript` (`npm:@typescript/typescript6`) keeps the TS 6 JS API that `typescript-eslint` imports (TS 7.0 ships no programmatic API; revisit once typescript-eslint supports TS 7). `tsc6` is available for the 6.x compiler if needed.
+
 ## Database Migrations
 
 D1 migrations live in `migrations/` (numbered `0001_…` onwards). `schema.sql` is the _initial_ schema reference but is **not** the source of truth for production — applied migrations are.
