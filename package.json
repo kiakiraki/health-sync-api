@@ -15,7 +15,7 @@
 		"typecheck": "tsc --noEmit -p test/tsconfig.json"
 	},
 	"devDependencies": {
-		"@cloudflare/vitest-pool-workers": "^0.20.3",
+		"@cloudflare/vitest-pool-workers": "^0.22.0",
 		"@eslint/js": "10.0.1",
 		"@typescript/native": "npm:typescript@^7.0.2",
 		"eslint": "10.10.0",
@@ -23,7 +23,7 @@
 		"prettier": "3.9.6",
 		"typescript": "npm:@typescript/typescript6@^6.0.2",
 		"typescript-eslint": "8.69.0",
-		"vitest": "~4.1.10",
+		"vitest": "~5.0.0",
 		"wrangler": "^4.127.1"
 	}
 }
