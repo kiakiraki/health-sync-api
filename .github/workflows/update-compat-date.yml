@@ -25,12 +25,12 @@ jobs:
 
       - name: Update compatibility_date
         run: |
-          # Tests run on the workerd bundled with @cloudflare/vitest-pool-workers,
+          # Tests run on the workerd bundled with @cloudflare/vitest-plugin,
           # which lags behind wrangler's. A date newer than that runtime supports
           # makes every test fail to boot, so cap the proposal at its date.
           TEST_RUNTIME_DATE=$(node -p "
             const { createRequire } = require('node:module');
-            const pool = createRequire(require('node:path').resolve('node_modules/@cloudflare/vitest-pool-workers/package.json'));
+            const pool = createRequire(require('node:path').resolve('node_modules/@cloudflare/vitest-plugin/package.json'));
             createRequire(pool.resolve('miniflare'))('workerd').compatibilityDate
           ")
           CANDIDATE=$(date -u -d '-7 days' +%Y-%m-%d)

@@ -12,7 +12,7 @@ health-sync-api is a Cloudflare Workers API for syncing and storing personal hea
 # Start local dev server (wrangler dev / miniflare)
 npm run dev
 
-# Run all tests (vitest under @cloudflare/vitest-pool-workers)
+# Run all tests (vitest under @cloudflare/vitest-plugin)
 npm run test
 
 # Run a single test file
