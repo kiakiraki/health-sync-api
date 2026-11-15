@@ -14,9 +14,6 @@ export default tseslint.config(
 			ecmaVersion: 2024,
 			sourceType: 'module',
 		},
-		rules: {
-			'@typescript-eslint/no-empty-object-type': ['error', { allowInterfaces: 'with-single-extends' }],
-		},
 	},
 	prettier,
 );
