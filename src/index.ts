@@ -159,6 +159,8 @@ const DATE_FORMAT = /^\d{4}-\d{2}-\d{2}$/;
 // and the upsert conflict target dedupes on — an offset form of the same
 // instant ('+09:00') would silently escape both.
 const UTC_INSTANT_FORMAT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+// Upper bound for ?days=N — keeps daysAgoDate away from Invalid Date.
+const MAX_DAYS = 36500;
 
 // --- request body validation helpers -------------------------------------
 // SQLite (D1) has no strict column typing, so without these checks a payload
@@ -171,6 +173,21 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function isNonEmptyString(value: unknown): value is string {
 	return typeof value === 'string' && value.length > 0;
+}
+
+// YYYY-MM-DD that is also a real calendar date (rejects 2026-13-45, 2026-02-31).
+function isValidDateString(value: unknown): value is string {
+	if (typeof value !== 'string' || !DATE_FORMAT.test(value)) return false;
+	const d = new Date(`${value}T00:00:00Z`);
+	return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
+
+// UTC ISO 8601 instant ('...Z') that parses to a real moment. The date part
+// is checked separately because Date.parse rolls '02-31' over to March.
+function isUtcInstant(value: unknown): value is string {
+	return (
+		typeof value === 'string' && UTC_INSTANT_FORMAT.test(value) && isValidDateString(value.slice(0, 10)) && !Number.isNaN(Date.parse(value))
+	);
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -214,7 +231,7 @@ function validateSyncRequest(body: unknown): string | null {
 	for (let i = 0; i < bodyMeasurements.length; i++) {
 		const m = bodyMeasurements[i];
 		if (!isPlainObject(m)) return `body_measurements[${i}] must be an object`;
-		if (!isNonEmptyString(m.recorded_at)) return `body_measurements[${i}].recorded_at must be a non-empty string`;
+		if (!isUtcInstant(m.recorded_at)) return `body_measurements[${i}].recorded_at must be a UTC ISO 8601 datetime (YYYY-MM-DDThh:mm:ssZ)`;
 		if (!isOptionalNumber(m.weight_kg)) return `body_measurements[${i}].weight_kg must be a number`;
 		if (!isOptionalNumber(m.body_fat_percent)) return `body_measurements[${i}].body_fat_percent must be a number`;
 	}
@@ -223,7 +240,7 @@ function validateSyncRequest(body: unknown): string | null {
 	for (let i = 0; i < bloodPressure.length; i++) {
 		const bp = bloodPressure[i];
 		if (!isPlainObject(bp)) return `blood_pressure[${i}] must be an object`;
-		if (!isNonEmptyString(bp.recorded_at)) return `blood_pressure[${i}].recorded_at must be a non-empty string`;
+		if (!isUtcInstant(bp.recorded_at)) return `blood_pressure[${i}].recorded_at must be a UTC ISO 8601 datetime (YYYY-MM-DDThh:mm:ssZ)`;
 		if (!isFiniteNumber(bp.systolic)) return `blood_pressure[${i}].systolic must be a number`;
 		if (!isFiniteNumber(bp.diastolic)) return `blood_pressure[${i}].diastolic must be a number`;
 		if (!isOptionalNumber(bp.pulse)) return `blood_pressure[${i}].pulse must be a number`;
@@ -233,8 +250,8 @@ function validateSyncRequest(body: unknown): string | null {
 	for (let i = 0; i < sleepSessions.length; i++) {
 		const s = sleepSessions[i];
 		if (!isPlainObject(s)) return `sleep_sessions[${i}] must be an object`;
-		if (!isNonEmptyString(s.start_time)) return `sleep_sessions[${i}].start_time must be a non-empty string`;
-		if (!isNonEmptyString(s.end_time)) return `sleep_sessions[${i}].end_time must be a non-empty string`;
+		if (!isUtcInstant(s.start_time)) return `sleep_sessions[${i}].start_time must be a UTC ISO 8601 datetime (YYYY-MM-DDThh:mm:ssZ)`;
+		if (!isUtcInstant(s.end_time)) return `sleep_sessions[${i}].end_time must be a UTC ISO 8601 datetime (YYYY-MM-DDThh:mm:ssZ)`;
 		if (!isOptionalNumber(s.duration_hours)) return `sleep_sessions[${i}].duration_hours must be a number`;
 		if (s.stages !== undefined && s.stages !== null) {
 			if (!Array.isArray(s.stages)) return `sleep_sessions[${i}].stages must be an array`;
@@ -242,8 +259,10 @@ function validateSyncRequest(body: unknown): string | null {
 				const stage = s.stages[j] as unknown;
 				if (!isPlainObject(stage)) return `sleep_sessions[${i}].stages[${j}] must be an object`;
 				if (!isNonEmptyString(stage.stage)) return `sleep_sessions[${i}].stages[${j}].stage must be a non-empty string`;
-				if (!isNonEmptyString(stage.start_time)) return `sleep_sessions[${i}].stages[${j}].start_time must be a non-empty string`;
-				if (!isNonEmptyString(stage.end_time)) return `sleep_sessions[${i}].stages[${j}].end_time must be a non-empty string`;
+				if (!isUtcInstant(stage.start_time))
+					return `sleep_sessions[${i}].stages[${j}].start_time must be a UTC ISO 8601 datetime (YYYY-MM-DDThh:mm:ssZ)`;
+				if (!isUtcInstant(stage.end_time))
+					return `sleep_sessions[${i}].stages[${j}].end_time must be a UTC ISO 8601 datetime (YYYY-MM-DDThh:mm:ssZ)`;
 			}
 		}
 	}
@@ -252,16 +271,15 @@ function validateSyncRequest(body: unknown): string | null {
 	for (let i = 0; i < steps.length; i++) {
 		const st = steps[i];
 		if (!isPlainObject(st)) return `steps[${i}] must be an object`;
-		if (!isNonEmptyString(st.date) || !DATE_FORMAT.test(st.date)) return `steps[${i}].date must be YYYY-MM-DD`;
-		if (!isFiniteNumber(st.count)) return `steps[${i}].count must be a number`;
+		if (!isValidDateString(st.date)) return `steps[${i}].date must be YYYY-MM-DD`;
+		if (!isFiniteNumber(st.count) || !Number.isInteger(st.count) || st.count < 0) return `steps[${i}].count must be a non-negative integer`;
 	}
 
 	const heartRate = (body.heart_rate ?? []) as unknown[];
 	for (let i = 0; i < heartRate.length; i++) {
 		const hr = heartRate[i];
 		if (!isPlainObject(hr)) return `heart_rate[${i}] must be an object`;
-		if (!isNonEmptyString(hr.recorded_at) || !UTC_INSTANT_FORMAT.test(hr.recorded_at))
-			return `heart_rate[${i}].recorded_at must be a UTC ISO 8601 datetime (YYYY-MM-DDThh:mm:ssZ)`;
+		if (!isUtcInstant(hr.recorded_at)) return `heart_rate[${i}].recorded_at must be a UTC ISO 8601 datetime (YYYY-MM-DDThh:mm:ssZ)`;
 		if (!isFiniteNumber(hr.bpm) || !Number.isInteger(hr.bpm)) return `heart_rate[${i}].bpm must be an integer`;
 	}
 
@@ -269,7 +287,7 @@ function validateSyncRequest(body: unknown): string | null {
 	for (let i = 0; i < restingHeartRate.length; i++) {
 		const rhr = restingHeartRate[i];
 		if (!isPlainObject(rhr)) return `resting_heart_rate[${i}] must be an object`;
-		if (!isNonEmptyString(rhr.date) || !DATE_FORMAT.test(rhr.date)) return `resting_heart_rate[${i}].date must be YYYY-MM-DD`;
+		if (!isValidDateString(rhr.date)) return `resting_heart_rate[${i}].date must be YYYY-MM-DD`;
 		if (!isFiniteNumber(rhr.bpm) || !Number.isInteger(rhr.bpm)) return `resting_heart_rate[${i}].bpm must be an integer`;
 	}
 
@@ -277,8 +295,7 @@ function validateSyncRequest(body: unknown): string | null {
 	for (let i = 0; i < spo2.length; i++) {
 		const sp = spo2[i];
 		if (!isPlainObject(sp)) return `spo2[${i}] must be an object`;
-		if (!isNonEmptyString(sp.recorded_at) || !UTC_INSTANT_FORMAT.test(sp.recorded_at))
-			return `spo2[${i}].recorded_at must be a UTC ISO 8601 datetime (YYYY-MM-DDThh:mm:ssZ)`;
+		if (!isUtcInstant(sp.recorded_at)) return `spo2[${i}].recorded_at must be a UTC ISO 8601 datetime (YYYY-MM-DDThh:mm:ssZ)`;
 		if (!isFiniteNumber(sp.percentage) || sp.percentage < 0 || sp.percentage > 100)
 			return `spo2[${i}].percentage must be a number between 0 and 100`;
 	}
@@ -287,7 +304,7 @@ function validateSyncRequest(body: unknown): string | null {
 	for (let i = 0; i < dailyActivity.length; i++) {
 		const da = dailyActivity[i];
 		if (!isPlainObject(da)) return `daily_activity[${i}] must be an object`;
-		if (!isNonEmptyString(da.date) || !DATE_FORMAT.test(da.date)) return `daily_activity[${i}].date must be YYYY-MM-DD`;
+		if (!isValidDateString(da.date)) return `daily_activity[${i}].date must be YYYY-MM-DD`;
 		if (!isOptionalNumber(da.active_calories_kcal)) return `daily_activity[${i}].active_calories_kcal must be a number`;
 		if (!isOptionalNumber(da.total_calories_kcal)) return `daily_activity[${i}].total_calories_kcal must be a number`;
 	}
@@ -323,10 +340,10 @@ function parseDateRangeParams(url: URL, defaultDays?: number): { from?: string; 
 
 	// from/to takes priority over days
 	if (fromParam || toParam) {
-		if (fromParam && !DATE_FORMAT.test(fromParam)) {
+		if (fromParam && !isValidDateString(fromParam)) {
 			return { error: errorResponse('Invalid from parameter (must be YYYY-MM-DD)', 400) };
 		}
-		if (toParam && !DATE_FORMAT.test(toParam)) {
+		if (toParam && !isValidDateString(toParam)) {
 			return { error: errorResponse('Invalid to parameter (must be YYYY-MM-DD)', 400) };
 		}
 		if (fromParam && toParam && fromParam > toParam) {
@@ -344,6 +361,9 @@ function parseDateRangeParams(url: URL, defaultDays?: number): { from?: string; 
 		const days = parseInt(daysParam, 10);
 		if (days < 1) {
 			return { error: errorResponse('Invalid days parameter (must be a positive integer)', 400) };
+		}
+		if (days > MAX_DAYS) {
+			return { error: errorResponse(`Invalid days parameter (must be at most ${MAX_DAYS})`, 400) };
 		}
 		return { from: daysAgoDate(days) };
 	}
@@ -635,7 +655,7 @@ async function handleCpap(request: Request, env: Env): Promise<Response> {
 	if (!parsed.recorded_date) {
 		return errorResponse('recorded_date is required', 400);
 	}
-	if (typeof parsed.recorded_date !== 'string' || !DATE_FORMAT.test(parsed.recorded_date)) {
+	if (!isValidDateString(parsed.recorded_date)) {
 		return errorResponse('Invalid recorded_date format (must be YYYY-MM-DD)', 400);
 	}
 	const numericError = validateNumericFields(parsed, CPAP_NUMERIC_FIELDS);
@@ -726,7 +746,7 @@ async function handleBloodTest(request: Request, env: Env): Promise<Response> {
 	if (!parsed.test_date) {
 		return errorResponse('test_date is required', 400);
 	}
-	if (typeof parsed.test_date !== 'string' || !DATE_FORMAT.test(parsed.test_date)) {
+	if (!isValidDateString(parsed.test_date)) {
 		return errorResponse('Invalid test_date format (must be YYYY-MM-DD)', 400);
 	}
 	const numericError = validateNumericFields(parsed, BLOOD_TEST_NUMERIC_FIELDS);
@@ -814,7 +834,7 @@ async function handlePostMeal(request: Request, env: Env): Promise<Response> {
 	if (!parsed.date) {
 		return errorResponse('date is required', 400);
 	}
-	if (typeof parsed.date !== 'string' || !DATE_FORMAT.test(parsed.date)) {
+	if (!isValidDateString(parsed.date)) {
 		return errorResponse('Invalid date format (must be YYYY-MM-DD)', 400);
 	}
 	if (!isNonEmptyString(parsed.meal_type) || !(VALID_MEAL_TYPES as readonly string[]).includes(parsed.meal_type)) {
@@ -1037,7 +1057,7 @@ export default {
 				const authError = authenticate(request, env);
 				if (authError) return authError;
 			}
-			return route.handler(request, env);
+			return await route.handler(request, env);
 		} catch (error) {
 			console.error('Unhandled error:', error);
 			const isDbError = error instanceof Error && (error.message.includes('D1') || error.message.includes('SQLITE'));
