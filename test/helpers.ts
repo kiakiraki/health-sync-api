@@ -1,4 +1,4 @@
-import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { env } from 'cloudflare:test';
 import worker from '../src/index';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
@@ -30,8 +30,5 @@ export async function makeRequest(
 		headers,
 		body: rawBody !== undefined ? rawBody : body !== undefined ? JSON.stringify(body) : undefined,
 	});
-	const ctx = createExecutionContext();
-	const response = await worker.fetch(request, env);
-	await waitOnExecutionContext(ctx);
-	return response;
+	return worker.fetch(request, env);
 }

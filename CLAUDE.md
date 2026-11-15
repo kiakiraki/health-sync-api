@@ -104,6 +104,7 @@ All list endpoints accept the same query-param shape, parsed by `parseDateRangeP
 D1 tables (see `schema.sql` + `migrations/`):
 
 - `body_measurements`, `blood_pressure`, `sleep_sessions`, `steps` — the four "sync" tables, each with a unique index on its time column to enable upserts (added in `0002`; the `steps` index had to be recreated in `0007` because `schema.sql` already had a **non-unique** `idx_steps_date`, which made `0002`'s `CREATE UNIQUE INDEX IF NOT EXISTS` a silent no-op and broke `ON CONFLICT(date)` on databases bootstrapped from `schema.sql`).
+- `0009` dropped six non-unique indexes that duplicated a unique index on the same leading column (`idx_body_recorded`, `idx_bp_recorded`, `idx_sleep_start`, `idx_cpap_date`, `idx_blood_tests_date`, `idx_meals_date`); date-range reads use the unique indexes (`test/schema.spec.ts` guards this).
 - `sleep_stages` — Health Connect-style stage segments, FK to `sleep_sessions(id)` with `ON DELETE CASCADE` (`0006`).
 - `cpap_logs` — CPAP therapy data; original columns in `0001`, expanded in `0004` with pressure / breathing rate / tidal volume statistics and event counts.
 - `blood_tests` — clinical lab values keyed on `test_date` (`0003`).
