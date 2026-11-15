@@ -403,6 +403,31 @@ describe('Health Sync API', () => {
 			expect(response.status).toBe(400);
 		});
 
+		it('returns 400 for days above the maximum', async () => {
+			for (const days of ['400000000', '99999999999999999999']) {
+				const response = await makeRequest(`/metrics?days=${days}`, { headers: createAuthHeaders() });
+				expect(response.status).toBe(400);
+				const data = await response.json<AnyJson>();
+				expect(data.error).toBe('Invalid days parameter (must be at most 36500)');
+			}
+		});
+
+		it('returns 400 for impossible calendar dates in from/to', async () => {
+			const cases: [string, string][] = [
+				['/metrics?from=2026-13-45', 'Invalid from parameter (must be YYYY-MM-DD)'],
+				['/metrics?to=2026-13-45', 'Invalid to parameter (must be YYYY-MM-DD)'],
+				['/metrics?from=2026-02-31', 'Invalid from parameter (must be YYYY-MM-DD)'],
+				['/meals?from=2026-13-45', 'Invalid from parameter (must be YYYY-MM-DD)'],
+				['/blood-test?from=2026-02-30', 'Invalid from parameter (must be YYYY-MM-DD)'],
+			];
+			for (const [path, message] of cases) {
+				const response = await makeRequest(path, { headers: createAuthHeaders() });
+				expect(response.status).toBe(400);
+				const data = await response.json<AnyJson>();
+				expect(data.error).toBe(message);
+			}
+		});
+
 		it('returns 400 for non-numeric days', async () => {
 			const response = await makeRequest('/metrics?days=abc', {
 				headers: createAuthHeaders(),

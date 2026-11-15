@@ -68,7 +68,7 @@ describe('request body validation', () => {
 			});
 			expect(response.status).toBe(400);
 			const data = await response.json<AnyJson>();
-			expect(data.error).toBe('sleep_sessions[0].stages[0].end_time must be a non-empty string');
+			expect(data.error).toBe('sleep_sessions[0].stages[0].end_time must be a UTC ISO 8601 datetime (YYYY-MM-DDThh:mm:ssZ)');
 		});
 
 		it('returns 400 when heart_rate is not an array', async () => {
@@ -172,6 +172,81 @@ describe('request body validation', () => {
 			const data = await response.json<AnyJson>();
 			expect(data.success).toBe(true);
 		});
+
+		describe('calendar dates and UTC instants', () => {
+			const UTC_MSG = 'must be a UTC ISO 8601 datetime (YYYY-MM-DDThh:mm:ssZ)';
+
+			async function postSync(body: unknown) {
+				const response = await makeRequest('/sync', { method: 'POST', headers: createAuthHeaders(), body });
+				return { status: response.status, data: await response.json<AnyJson>() };
+			}
+
+			it('rejects an impossible steps date', async () => {
+				const { status, data } = await postSync({ steps: [{ date: '2026-02-31', count: 1 }] });
+				expect(status).toBe(400);
+				expect(data.error).toBe('steps[0].date must be YYYY-MM-DD');
+			});
+
+			it('rejects a non-ISO body_measurements recorded_at', async () => {
+				const { status, data } = await postSync({ body_measurements: [{ recorded_at: 'garbage', weight_kg: 70 }] });
+				expect(status).toBe(400);
+				expect(data.error).toBe(`body_measurements[0].recorded_at ${UTC_MSG}`);
+			});
+
+			it('rejects a non-UTC blood_pressure recorded_at', async () => {
+				const { status, data } = await postSync({
+					blood_pressure: [{ recorded_at: '2026-01-01T09:00:00+09:00', systolic: 120, diastolic: 80 }],
+				});
+				expect(status).toBe(400);
+				expect(data.error).toBe(`blood_pressure[0].recorded_at ${UTC_MSG}`);
+			});
+
+			it('rejects a non-UTC sleep session start_time', async () => {
+				const { status, data } = await postSync({
+					sleep_sessions: [{ start_time: '2026-01-01 00:00:00', end_time: '2026-01-01T08:00:00Z' }],
+				});
+				expect(status).toBe(400);
+				expect(data.error).toBe(`sleep_sessions[0].start_time ${UTC_MSG}`);
+			});
+
+			it('rejects a non-UTC sleep stage end_time', async () => {
+				const { status, data } = await postSync({
+					sleep_sessions: [
+						{
+							start_time: '2026-01-01T00:00:00Z',
+							end_time: '2026-01-01T08:00:00Z',
+							stages: [
+								{ stage: 'deep', start_time: '2026-01-01T00:00:00Z', end_time: '2026-01-01T01:00:00Z' },
+								{ stage: 'light', start_time: '2026-01-01T01:00:00Z', end_time: '2026-01-01T02:00:00+09:00' },
+							],
+						},
+					],
+				});
+				expect(status).toBe(400);
+				expect(data.error).toBe(`sleep_sessions[0].stages[1].end_time ${UTC_MSG}`);
+			});
+
+			it('rejects a shape-valid but impossible instant', async () => {
+				for (const recorded_at of ['2026-13-45T00:00:00Z', '2026-02-31T00:00:00Z', '2026-01-01T25:00:00Z']) {
+					const { status, data } = await postSync({ body_measurements: [{ recorded_at }] });
+					expect(status).toBe(400);
+					expect(data.error).toBe(`body_measurements[0].recorded_at ${UTC_MSG}`);
+				}
+			});
+
+			it('rejects negative and fractional steps count', async () => {
+				for (const count of [-1, 1.5]) {
+					const { status, data } = await postSync({ steps: [{ date: '2026-01-01', count }] });
+					expect(status).toBe(400);
+					expect(data.error).toBe('steps[0].count must be a non-negative integer');
+				}
+			});
+
+			it('accepts fractional-second UTC instants', async () => {
+				const { status } = await postSync({ body_measurements: [{ recorded_at: '2026-01-01T00:00:00.123Z', weight_kg: 70 }] });
+				expect(status).toBe(200);
+			});
+		});
 	});
 
 	describe('POST /cpap', () => {
@@ -264,5 +339,21 @@ describe('request body validation', () => {
 			});
 			expect(response.status).toBe(401);
 		});
+	});
+
+	describe('impossible calendar dates', () => {
+		const cases: [string, Record<string, unknown>, string][] = [
+			['/cpap', { recorded_date: '2026-02-31' }, 'Invalid recorded_date format (must be YYYY-MM-DD)'],
+			['/blood-test', { test_date: '2026-13-01' }, 'Invalid test_date format (must be YYYY-MM-DD)'],
+			['/meals', { date: '2026-02-31', meal_type: 'lunch' }, 'Invalid date format (must be YYYY-MM-DD)'],
+		];
+		for (const [path, body, message] of cases) {
+			it(`POST ${path} returns 400`, async () => {
+				const response = await makeRequest(path, { method: 'POST', headers: createAuthHeaders(), body });
+				expect(response.status).toBe(400);
+				const data = await response.json<AnyJson>();
+				expect(data.error).toBe(message);
+			});
+		}
 	});
 });

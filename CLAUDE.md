@@ -64,7 +64,9 @@ npx wrangler d1 migrations apply health-sync-db --remote
 
 All POST bodies are validated (object shape, required fields, field types, `YYYY-MM-DD` formats) before any D1 statement is prepared — malformed payloads return a 400 with a field-specific message instead of surfacing as a 500 from D1. See the `validate*` helpers and the `*_NUMERIC_FIELDS` lists in `src/index.ts`; `test/validation.spec.ts` covers the negative cases.
 
-A top-level `try/catch` in `fetch` distinguishes D1/SQLITE-flavored errors from generic ones for the 500 response message.
+Dates (`steps`/`resting_heart_rate`/`daily_activity` `date`, `recorded_date`, `test_date`, meal `date`, `from`/`to`) must be real calendar dates (`isValidDateString` rejects `2026-02-31`). Every datetime field in `/sync` (body measurements, blood pressure, sleep sessions and stages, heart rate, SpO2) must be a UTC `Z` instant (`isUtcInstant`); `steps[].count` must be a non-negative integer.
+
+A top-level `try/catch` in `fetch` (it `await`s the handler so async rejections are caught) distinguishes D1/SQLITE-flavored errors from generic ones for the 500 response message.
 
 ### API Endpoints
 
@@ -83,8 +85,8 @@ A top-level `try/catch` in `fetch` distinguishes D1/SQLITE-flavored errors from 
 
 All list endpoints accept the same query-param shape, parsed by `parseDateRangeParams(url, defaultDays?)`:
 
-- `?days=N` — last N days, ending at _JST_ today (positive integer).
-- `?from=YYYY-MM-DD` and/or `?to=YYYY-MM-DD` — JST wall-clock days. `from`/`to` win over `days` when both are supplied.
+- `?days=N` — last N days, ending at _JST_ today (positive integer, at most `MAX_DAYS` = 36500, larger values return 400).
+- `?from=YYYY-MM-DD` and/or `?to=YYYY-MM-DD` — JST wall-clock days; must be real calendar dates. `from`/`to` win over `days` when both are supplied.
 - No params → fall back to `defaultDays` (7 for `/metrics` and `/meals`; none for `/blood-test`).
 
 `daysAgoDate(days, now?)` and `todayInAppTZ(now?)` are exported with an optional `now` argument so they can be unit-tested without `vi.setSystemTime` — Cloudflare's vitest pool runs Worker code in an isolate where the timer mock doesn't reach `new Date()` inside the handler. `test/timezone.spec.ts` covers the JST anchoring; the rest of the assertions still go through the fetch handler.
