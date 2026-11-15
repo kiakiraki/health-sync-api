@@ -15,6 +15,13 @@ updates:
           - 'vitest'
           - '@vitest/*'
           - '@cloudflare/vitest-pool-workers'
+    ignore:
+      # @cloudflare/vitest-pool-workers peers on vitest ^4.1 — drop this once
+      # a pool-workers release supports vitest 5.
+      - dependency-name: 'vitest'
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@vitest/*'
+        update-types: ['version-update:semver-major']
     labels:
       - 'dependencies'
 
